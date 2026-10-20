@@ -66,6 +66,18 @@ MIGRATIONS = [
         at TEXT NOT NULL
     );
     """,
+    # 0002：跨线契约授权（task 5.1）——用户对消费方（如剧创）开放哪类卡
+    """
+    CREATE TABLE grants (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        consumer TEXT NOT NULL,                     -- 如 juchuang
+        card_kinds TEXT NOT NULL,                   -- JSON array: stance/tension
+        granted_at TEXT NOT NULL,
+        revoked_at TEXT
+    );
+    CREATE INDEX idx_grants_user ON grants(user_id, consumer);
+    """,
 ]
 
 
@@ -241,3 +253,34 @@ def audit(
         (new_id(), user_id, action, resource, outcome, detail, now()),
     )
     conn.commit()
+
+
+# ---- 跨线契约授权（task 5.1 的数据面） ----
+
+def grant(
+    conn: sqlite3.Connection, user_id: str, consumer: str, card_kinds: list[str],
+) -> dict:
+    valid = {"stance", "tension"}
+    if not set(card_kinds) <= valid:
+        raise ValueError(f"card_kinds 只支持 {sorted(valid)}")
+    gid = new_id()
+    conn.execute(
+        "INSERT INTO grants (id, user_id, consumer, card_kinds, granted_at)"
+        " VALUES (?,?,?,?,?)",
+        (gid, user_id, consumer, json.dumps(sorted(set(card_kinds))), now()),
+    )
+    conn.commit()
+    return {"id": gid, "consumer": consumer, "card_kinds": sorted(set(card_kinds))}
+
+
+def active_grant(
+    conn: sqlite3.Connection, user_id: str, consumer: str,
+) -> dict | None:
+    r = conn.execute(
+        "SELECT * FROM grants WHERE user_id=? AND consumer=? AND revoked_at IS NULL"
+        " ORDER BY granted_at DESC LIMIT 1",
+        (user_id, consumer),
+    ).fetchone()
+    if not r:
+        return None
+    return {"id": r["id"], "card_kinds": json.loads(r["card_kinds"])}

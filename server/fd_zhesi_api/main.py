@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
 from .cards import router as cards_router
+from .contract import router as contract_router
 
 app = FastAPI(title="fd-zhesi-api", version=__version__)
 
@@ -22,6 +23,7 @@ app.add_middleware(
 )
 
 app.include_router(cards_router)
+app.include_router(contract_router)
 
 
 @app.get("/healthz")
