@@ -78,6 +78,19 @@ MIGRATIONS = [
     );
     CREATE INDEX idx_grants_user ON grants(user_id, consumer);
     """,
+    # 0003：谱闭环投影（task 4.3）——版本化保留历史（思想年轮的投影面）
+    """
+    CREATE TABLE projections (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        axes_version TEXT NOT NULL,
+        axes TEXT NOT NULL,                         -- JSON {axis: value}
+        neighbors TEXT NOT NULL,                    -- JSON [{atlas_id,name_en,name_zh,distance}]
+        based_on_cards TEXT NOT NULL,               -- JSON [card_id]
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_projections_user ON projections(user_id, created_at);
+    """,
 ]
 
 
