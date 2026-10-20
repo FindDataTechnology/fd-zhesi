@@ -12,6 +12,8 @@ license = "MIT"
 authors = [{ name = "FindDataTechnology" }]
 dependencies = [
     "fastapi>=0.115",
+    "pydantic>=2",
+    "pyjwt[crypto]>=2.8",
     "uvicorn",
 ]
 
