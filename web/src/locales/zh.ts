@@ -1,5 +1,5 @@
 export default {
-  nav: { home: "首页", workbench: "工作台", admin: "管理后台", token: "访问令牌" },
+  nav: { login: "登录", logout: "退出", home: "首页", workbench: "工作台", admin: "管理后台", token: "访问令牌" },
   landing: {
     title: "哲思",
     subtitle: "构建你对世界的认识——长期的世界观工坊",

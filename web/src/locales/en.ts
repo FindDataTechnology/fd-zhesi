@@ -1,5 +1,5 @@
 export default {
-  nav: { home: "Home", workbench: "Workbench", admin: "Admin", token: "Access token" },
+  nav: { login: "Sign in", logout: "Sign out", home: "Home", workbench: "Workbench", admin: "Admin", token: "Access token" },
   landing: {
     title: "Zhesi",
     subtitle: "Build your view of the world — a long-term worldview workshop",
