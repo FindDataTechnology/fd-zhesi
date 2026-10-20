@@ -149,3 +149,38 @@ def test_jwks_jwt_path(tmp_path, monkeypatch) -> None:
         assert r.status_code == 401
     finally:
         srv.shutdown()
+
+
+def test_jwks_es384_path(tmp_path, monkeypatch) -> None:
+    """Logto 1.42 实签算法 ES384 必须放行（线上 aloadtree ID token 实测踩坑）。"""
+    import http.server
+    import json
+    import socketserver
+    import threading
+
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    key = ec.generate_private_key(ec.SECP384R1())
+    jwk = jwt.algorithms.ECAlgorithm.to_jwk(key.public_key(), as_dict=True)
+    jwk.update(kid="ec1", alg="ES384")
+    jwks_file = tmp_path / "jwks.json"
+    jwks_file.write_text(json.dumps({"keys": [jwk]}))
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+    socketserver.TCPServer.allow_reuse_address = True
+    srv = socketserver.TCPServer(("127.0.0.1", 0), Handler)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        monkeypatch.setenv("FD_ZHESI_AUTH_JWKS", f"http://127.0.0.1:{port}/{jwks_file.name}")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("FD_ZHESI_AUTH_DEV_TOKENS", raising=False)
+        tok = jwt.encode({"sub": "ec-user", "exp": 4102444800}, key, algorithm="ES384", headers={"kid": "ec1"})
+        r = client.get("/api/v1/cards", headers={"Authorization": f"Bearer {tok}"})
+        assert r.status_code == 200
+    finally:
+        srv.shutdown()

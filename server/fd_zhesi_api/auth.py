@@ -42,10 +42,11 @@ def _verify_jwt(token: str) -> str:
 
     jwks = PyJWKClient(jwks_url)
     signing = jwks.get_signing_key_from_jwt(token)
+    # Logto 1.42 签发 ES384（实测 aloadtree ID token）；RS256 保留兼容自签场景
     claims = jwt.decode(
         token,
         signing.key,
-        algorithms=["RS256"],
+        algorithms=["RS256", "ES384"],
         audience=audience or None,
         options={"require": ["exp", "sub"]},
     )
