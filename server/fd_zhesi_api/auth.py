@@ -42,13 +42,18 @@ def _verify_jwt(token: str) -> str:
 
     jwks = PyJWKClient(jwks_url)
     signing = jwks.get_signing_key_from_jwt(token)
-    # Logto 1.42 签发 ES384（实测 aloadtree ID token）；RS256 保留兼容自签场景
+    # Logto 1.42 签发 ES384（实测 aloadtree ID token）；RS256 保留兼容自签场景。
+    # 未配置 audience 时显式关 aud 校验：pyjwt 2.10+ 对「token 带 aud 但调用方未传」
+    # 也执行校验并抛 InvalidAudienceError（线上实测第二个坑）。
     claims = jwt.decode(
         token,
         signing.key,
         algorithms=["RS256", "ES384"],
         audience=audience or None,
-        options={"require": ["exp", "sub"]},
+        options={
+            "require": ["exp", "sub"],
+            **({} if audience else {"verify_aud": False}),
+        },
     )
     return str(claims["sub"])
 
