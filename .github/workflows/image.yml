@@ -29,10 +29,16 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: actions/checkout@v4
+        with:
+          repository: scs001/fd-zhesi-reference-images
+          path: fd-zhesi-reference
+
       - name: Install
         working-directory: server
         run: |
           python -m pip install --upgrade pip
+          pip install -e ../fd-zhesi-reference
           pip install -e ".[dev]"
 
       - name: Test suite
