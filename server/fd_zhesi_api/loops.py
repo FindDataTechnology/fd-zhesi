@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -607,6 +608,252 @@ def _citation_candidates(
 _CITE_ID_RE = re.compile(r"(?:(?:survey-\d{4}|sep|atlas-critical):[^\s，。；、）)]+)")
 
 
+# ---------------------------------------------------------------------------
+# 5.1-5.3 steel-manning：候选生成 → 强度排序 → 参照系上界校验 → 分歧点
+#
+# 强度 = 0.4×覆盖对方前提比 + 0.4×来源权威度 + 0.2×参照系支持度
+#   - 覆盖：对方（用户）论证前提里被该候选论证实质触及的比例（**词面重叠**代理，
+#     不是语义蕴含——输出里如实标注 proxy，不冒充语义判断）
+#   - 权威度：SEP 条目 1.0 > Survey 分布 0.8 > Atlas critical 边 0.6
+#   - 支持度：该对立选项在 Survey 中的占比（传统分量，不主导强弱）
+#
+# 上界校验（5.2）：同一对立立场的更强论证存在时，弱候选不得作为「最强反驳」呈现。
+# 实现上把同一选项的不同证据组合当作同一立场的多个候选，取其中最强为参照系上界；
+# 低于上界的候选被拒（reason=weaker_than_reference）。
+# ---------------------------------------------------------------------------
+
+STEELMAN_WEIGHTS = {"coverage": 0.4, "authority": 0.4, "support": 0.2}
+AUTHORITY = {"sep": 1.0, "philpapers-survey": 0.8, "philosophy-atlas": 0.6}
+MIN_STRENGTH = 0.30  # 低于此值的候选不入选（弱候选不得冒充最强）
+# 门槛依据：Survey 分布本身即权威度 0.8 → 0.4×0.8 = 0.32 > 0.30，故「只要参照系
+# 有该题分布」就至少有一个候选可入选；只有权威度更低（仅 atlas critical 边，
+# 0.4×0.6=0.24）且支持度近零的候选才会被这条门槛挡掉——正是要挡的稻草人。
+
+AXIS_LABELS = {
+    "individualism": "个体与集体",
+    "materialism": "物质与心灵",
+    "rationalism": "理性与经验",
+    "determinism": "决定与自由",
+    "transcendence": "超越与内在",
+    "universalism": "普遍与特殊",
+}
+
+_STOPWORDS = {
+    "的", "了", "是", "在", "和", "与", "就", "都", "而", "及", "或", "一个", "这", "那",
+    "the", "a", "an", "of", "to", "is", "are", "and", "or", "in", "on", "that", "this",
+}
+
+
+def _tokens(text: str) -> set[str]:
+    """粗粒度词元：中文按二元切分 + 英文按词。仅用于覆盖率的词面代理。"""
+    raw = (text or "").casefold()
+    words = {w for w in re.findall(r"[a-z]{3,}", raw) if w not in _STOPWORDS}
+    cjk = re.findall(r"[\u4e00-\u9fff]+", raw)
+    grams = {chunk[i:i + 2] for chunk in cjk for i in range(len(chunk) - 1)}
+    return words | grams
+
+
+@dataclass(frozen=True)
+class SteelmanCandidate:
+    option: str
+    variant: str                      # survey-only / survey+sep / survey+sep+atlas
+    evidence: list[dict]              # 引用候选（含 id/label/source）
+    covered_premises: list[str]       # 被该候选触及的用户前提（id 或文本）
+    coverage_ratio: float
+    authority: float
+    reference_support: float
+    strength: float
+
+    def as_dict(self) -> dict:
+        return {
+            "option": self.option,
+            "variant": self.variant,
+            "strength": self.strength,
+            "coverage_ratio": self.coverage_ratio,
+            "coverage_proxy": "lexical-overlap",
+            "authority": self.authority,
+            "reference_support": self.reference_support,
+            "covered_premises": self.covered_premises,
+            "citations": [e["id"] for e in self.evidence],
+        }
+
+
+def _candidate_premises(card: dict) -> list[dict]:
+    argument = card.get("argument") or {}
+    return argument.get("premises") or []
+
+
+def _coverage(card: dict, evidence: list[dict]) -> tuple[list[str], float]:
+    """候选论证覆盖了用户多少前提（词面重叠代理，如实标注）。"""
+    premises = _candidate_premises(card)
+    if not premises:
+        return [], 0.0
+    haystack = _tokens(" ".join(e.get("label", "") for e in evidence))
+    covered: list[str] = []
+    for premise in premises:
+        pid = premise.get("id") or premise.get("text", "")
+        if _tokens(premise.get("text", "")) & haystack:
+            covered.append(pid)
+    return covered, round(len(covered) / len(premises), 4)
+
+
+def _strength(coverage_ratio: float, authority: float, support: float) -> float:
+    return round(
+        STEELMAN_WEIGHTS["coverage"] * coverage_ratio
+        + STEELMAN_WEIGHTS["authority"] * authority
+        + STEELMAN_WEIGHTS["support"] * support,
+        4,
+    )
+
+
+def generate_steelman_candidates(
+    card: dict, dist: dict, opposing: list[dict], sep_cards: list[dict],
+    critical: list[dict] | None = None,
+) -> list[SteelmanCandidate]:
+    """为每个对立选项生成多档证据组合的候选，并算强度（不依赖 LLM）。"""
+    rd, q = dist["survey_round"], dist["question"]
+    total_pct = sum((o.get("pct") or 0) for o in opposing) or 1.0
+    out: list[SteelmanCandidate] = []
+
+    for opt in opposing:
+        survey_ev = [{
+            "id": f"survey-{rd}:{q}:{opt['option']}",
+            "source": "philpapers-survey",
+            "label": (
+                f"{opt.get('pct')}% {opt['option']}（{opt.get('option_zh') or opt['option']}）"
+            ),
+        }]
+        sep_ev = [
+            {"id": f"sep:{c['url']}", "source": "sep", "label": f"SEP《{c['title']}》{c['snippet']}"}
+            for c in sep_cards[:2]
+        ]
+        atlas_ev = [
+            {"id": e["id"], "source": "philosophy-atlas", "label": e["label"]}
+            for e in (critical or [])
+        ]
+        support = round(min(1.0, (opt.get("pct") or 0) / max(total_pct, 1.0)), 4)
+
+        variants = [("survey-only", survey_ev)]
+        if sep_ev:
+            variants.append(("survey+sep", survey_ev + sep_ev))
+        if atlas_ev:
+            variants.append(("survey+sep+atlas", survey_ev + sep_ev + atlas_ev))
+
+        for variant, evidence in variants:
+            covered, ratio = _coverage(card, evidence)
+            authority = max(AUTHORITY.get(e["source"], 0.5) for e in evidence)
+            out.append(
+                SteelmanCandidate(
+                    option=opt["option"],
+                    variant=variant,
+                    evidence=evidence,
+                    covered_premises=covered,
+                    coverage_ratio=ratio,
+                    authority=authority,
+                    reference_support=support,
+                    strength=_strength(ratio, authority, support),
+                )
+            )
+    out.sort(key=lambda c: (-c.strength, c.option, c.variant))
+    return out
+
+
+def check_upper_bound(
+    candidate: SteelmanCandidate, siblings: list[SteelmanCandidate],
+) -> tuple[bool, str | None]:
+    """参照系上界校验（5.2）：同一对立立场有更强论证时拒绝当前候选。"""
+    same_option = [
+        c for c in siblings
+        if c.option == candidate.option and c.variant != candidate.variant
+    ]
+    stronger = [c for c in same_option if c.strength > candidate.strength]
+    if stronger:
+        best = max(stronger, key=lambda c: c.strength)
+        return False, (
+            f"weaker_than_reference: 同一对立立场「{candidate.option}」存在更强论证"
+            f"（{best.variant} strength {best.strength} > {candidate.variant} "
+            f"{candidate.strength}）"
+        )
+    return True, None
+
+
+def select_strongest(
+    candidates: list[SteelmanCandidate], min_strength: float = MIN_STRENGTH,
+) -> tuple[SteelmanCandidate | None, list[dict]]:
+    """选最强候选：弱候选不入选、上界校验不过的拒收，逐条给出原因。"""
+    rejected: list[dict] = []
+    accepted: list[SteelmanCandidate] = []
+    for cand in candidates:
+        if cand.strength < min_strength:
+            rejected.append({
+                **cand.as_dict(),
+                "reason": f"below_min_strength({cand.strength}<{min_strength})",
+            })
+            continue
+        ok, reason = check_upper_bound(cand, candidates)
+        if not ok:
+            rejected.append({**cand.as_dict(), "reason": reason})
+            continue
+        accepted.append(cand)
+    if not accepted:
+        return None, rejected
+    accepted.sort(key=lambda c: (-c.strength, c.option))
+    return accepted[0], rejected
+
+
+def disagreement_points(card: dict, candidate: SteelmanCandidate) -> dict:
+    """可复核的分歧点（5.3）：共享前提、真正分歧、反驳成立条件。"""
+    from .axis_map import AXIS_MAP, resolve
+
+    premises = _candidate_premises(card)
+    covered = set(candidate.covered_premises)
+    shared = [
+        p.get("text", "")
+        for p in premises
+        if (p.get("id") or p.get("text", "")) not in covered
+    ]
+    contested = [
+        p.get("text", "")
+        for p in premises
+        if (p.get("id") or p.get("text", "")) in covered
+    ]
+
+    user = resolve(card.get("question", ""), card.get("position", ""),
+                   card.get("question_ref"))
+    opposed_deltas: dict[str, float] = {}
+    if user:
+        opposed_deltas = AXIS_MAP[user.question_key]["options"].get(candidate.option, {})
+    real: list[str] = []
+    conditions: list[str] = []
+    if user:
+        axes = set(user.deltas) | set(opposed_deltas)
+        for axis in sorted(axes):
+            mine = user.deltas.get(axis, 0.0)
+            theirs = opposed_deltas.get(axis, 0.0)
+            if mine == 0.0 and theirs == 0.0:
+                continue
+            if (mine >= 0) != (theirs >= 0) or abs(mine - theirs) >= 1.0:
+                label = AXIS_LABELS.get(axis, axis)
+                real.append(
+                    f"「{label}」轴：你的立场 {mine:+.1f}，对立面「{candidate.option}」{theirs:+.1f}"
+                )
+                conditions.append(
+                    f"若在「{label}」上「{candidate.option}」的方向（{theirs:+.1f}）成立，"
+                    f"则你的立场「{card.get('position')}」需要额外论证说明如何兼容"
+                )
+    return {
+        "shared_premises": shared,
+        "contested_premises": contested,
+        "real_disagreement": real,
+        "conditions": conditions,
+        "note": (
+            "shared_premises 取自你立场卡里填写的论证前提（未填则本项为空）；"
+            "覆盖判定是词面重叠代理，不是语义蕴含"
+        ),
+    }
+
+
+
 def _scrub_invalid_ids(text: str, valid: set[str]) -> str:
     """正文里混入的非法 cite id 一律剥除（宁删勿假）。"""
 
@@ -617,10 +864,13 @@ def _scrub_invalid_ids(text: str, valid: set[str]) -> str:
 
 
 def _deterministic_objection(
-    card: dict, dist: dict, opposing: list[dict], sep_cards: list[dict]
+    card: dict, dist: dict, top: dict, sep_cards: list[dict]
 ) -> tuple[str, list[str]]:
-    """无 LLM/LLM 失败的模板反驳：对立选项 pct + 通俗释义 + SEP 条目。"""
-    top = opposing[0]
+    """无 LLM/LLM 失败的模板反驳：对立选项 pct + 通俗释义 + SEP 条目。
+
+    `top` 是 steel-manning 选出的对立选项（不是简单按 pct 取第一）——模板只负责
+    把已选定的最强对立立场渲染成人话，不做选择。
+    """
     pct = f"{top['pct']:.1f}" if isinstance(top["pct"], (int, float)) else "若干"
     zh = top["option_zh"] or top["option"]
     text = (
@@ -670,7 +920,13 @@ def _llm_objection(card: dict, dist: dict, cands: list[dict]) -> tuple[str, list
 
 @router.post("/debate/strongest-objection")
 def strongest_objection(body: ObjectionIn, user_id: str = Depends(require_user)) -> dict:
-    """最强反驳：检索召回候选 → 生成（LLM 或模板）→ 引用校验 → 回写立场卡。"""
+    """最强反驳：检索召回 → steel-manning 候选生成与排序 → 上界校验 →
+    生成（LLM 或模板）→ 引用校验 → 回写立场卡。
+
+    呈现的反驳必须是 steel-manned 形态（spec）：先按「覆盖对方前提数、来源权威度、
+    参照系支持度」排序，再对同一对立立场做上界校验（更强者存在时弱候选被拒），
+    最后才渲染。输出附可复核分歧点（共享前提、真正分歧、成立条件）。
+    """
     conn = personal.connect()
     try:
         personal.migrate(conn)
@@ -693,6 +949,7 @@ def strongest_objection(body: ObjectionIn, user_id: str = Depends(require_user))
             opposing = _opposing_options(dist, card["position"])
             terms = _terms_for_question(dist["question"])
             sep_cards = _concept_cards(rc, terms, cap=3)
+            critical = _critical_relations(rc, terms)
             cands = _citation_candidates(rc, dist, opposing, terms)
         finally:
             rc.close()
@@ -700,6 +957,17 @@ def strongest_objection(body: ObjectionIn, user_id: str = Depends(require_user))
         if not opposing:
             raise HTTPException(422, {"reason": "not_indexed",
                                       "message": "该题在 stances 无对立选项分布"})
+
+        # ---- 5.1/5.2 steel-manning：候选生成 → 强度排序 → 参照系上界校验 ----
+        candidates = generate_steelman_candidates(card, dist, opposing, sep_cards, critical)
+        best, rejected = select_strongest(candidates)
+        if best is None:
+            raise HTTPException(422, {
+                "reason": "no_steelman_candidate",
+                "message": "该题在参照系中找不到达到强度门槛的对立论证（不拿稻草人充数）",
+                "rejected": rejected,
+            })
+        top = next((o for o in opposing if o["option"] == best.option), opposing[0])
 
         engine = "deterministic"
         result = None
@@ -711,7 +979,7 @@ def strongest_objection(body: ObjectionIn, user_id: str = Depends(require_user))
             except llm.LLMError:
                 result = None
         if result is None:
-            text, cites = _deterministic_objection(card, dist, opposing, sep_cards)
+            text, cites = _deterministic_objection(card, dist, top, sep_cards)
         else:
             text, cites = result
 
@@ -724,7 +992,9 @@ def strongest_objection(body: ObjectionIn, user_id: str = Depends(require_user))
         if not updated:
             raise HTTPException(404, "卡不存在或已封存")
         personal.audit(conn, user_id, "loops.objection", body.card_id, "allowed",
-                       detail=f"engine={engine} cites={len(citations)}")
+                       detail=(f"engine={engine} cites={len(citations)}"
+                               f" steelman={best.option}/{best.variant}"
+                               f" strength={best.strength} rejected={len(rejected)}"))
 
         return {
             "card_id": body.card_id,
@@ -734,6 +1004,15 @@ def strongest_objection(body: ObjectionIn, user_id: str = Depends(require_user))
             "objection": text,
             "citations": citations,
             "engine": engine,
+            # 5.1/5.2：选定候选与逐条拒收原因（弱候选为何不入选，可核对）
+            "steelman": {
+                "selected": best.as_dict(),
+                "rejected": rejected,
+                "weights": STEELMAN_WEIGHTS,
+                "min_strength": MIN_STRENGTH,
+            },
+            # 5.3：可复核的分歧点
+            "disagreement_points": disagreement_points(card, best),
             "card": updated,
         }
     finally:

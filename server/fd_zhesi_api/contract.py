@@ -1,10 +1,18 @@
-"""剧创结构卡契约（task 5.1）：版本化 JSON API，向后兼容，授权范围受控。
+"""剧创结构卡契约（task 5.1；zhesi-atlas-resilience 6.3 向后兼容）。
 
 契约口径（design D6 / spec「剧创结构卡契约」）：
 - 剧创（或任何 consumer）取卡必须同时满足：用户令牌 + 用户对该 consumer 的
   有效授权（grants 表，范围到卡类：stance/tension）
-- 响应带 contract_version；新增字段只做增量，不删不改既有字段
+- 响应带 contract_version；**只增不删不改**既有字段（6.3：论证结构与张力
+  类型/状态均为新增字段，且对旧数据可选）
 - 每次跨线取卡写审计留痕（consumer + user + 卡类）
+
+contract_version 演进：
+- "1"：v1 字段集（cards: id/question/question_ref/position/stability/
+  strongest_objection/as_of；tensions: id/card_ids/description/source）
+- "2"：增量新增立场卡 `argument`（论证结构；旧卡/未填论证为空论证形态）、
+  张力 `kind` / `tension_type` / `status`。v1 消费方按已知字段取子集不受影响
+  （由 test_backward_compat_additive_only 守住）。
 """
 
 from __future__ import annotations
@@ -18,7 +26,7 @@ from .auth import require_user
 
 router = APIRouter(prefix="/api/v1", tags=["contract"])
 
-CONTRACT_VERSION = "1"
+CONTRACT_VERSION = "2"
 
 
 class GrantIn(BaseModel):
@@ -61,15 +69,7 @@ def contract_cards(consumer: str, user_id: str = Depends(require_user)) -> dict:
             rows = conn.execute(
                 "SELECT * FROM tensions WHERE user_id=? AND status='open'", (user_id,)
             ).fetchall()
-            tensions = [
-                {
-                    "id": r["id"],
-                    "card_ids": json.loads(r["card_ids"]),
-                    "description": r["description"],
-                    "source": r["source"],
-                }
-                for r in rows
-            ]
+            tensions = [personal.tension_row_to_dict(r) for r in rows]
         personal.audit(conn, user_id, "contract.cards", consumer, "allowed",
                        detail=f"kinds={g['card_kinds']} cards={len(cards)}")
         # 契约字段集：只增不删不改；剧创侧按 contract_version 消费
@@ -85,6 +85,8 @@ def contract_cards(consumer: str, user_id: str = Depends(require_user)) -> dict:
                     "stability": c["stability"],
                     "strongest_objection": c["strongest_objection"],
                     "as_of": c["updated_at"],
+                    # v2 新增（可选）：论证结构；旧卡/未填论证为空论证形态
+                    "argument": c["argument"],
                 }
                 for c in cards
             ],

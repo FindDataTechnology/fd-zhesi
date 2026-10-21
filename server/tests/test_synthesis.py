@@ -215,7 +215,39 @@ def test_reprojection_keeps_history() -> None:
     assert len(old - new) == 3 and len(new - old) == 3
 
 
-def test_projection_below_threshold_412() -> None:
+def test_atlas_recovery_resynthesis_keeps_old_versions(tmp_path, monkeypatch) -> None:
+    """Atlas 恢复后重新摄取并重合成，思想年轮保留旧版本可对比（2.3）。
+
+    降级版（手工种子锚定，confidence 低）与恢复版（Atlas 全量锚定，confidence 高）
+    并存于历史投影里，旧版本不被覆盖。
+    """
+    for q, p in MAPPED_15:
+        _card(q, p)
+
+    # 第一轮：Atlas 缺失 → 降级投影
+    monkeypatch.setenv("FD_ZHESI_REF_DB", str(tmp_path / "missing.db"))
+    v1 = client.post("/api/v1/synthesis/project", headers=AUTH).json()
+    assert v1["degraded"] is True and v1["neighbor_layer"] == "manual-seed"
+
+    # Atlas 恢复（重新摄取后 philosophers 有数据）
+    populated = _make_ref_db(tmp_path / "recovered.db")
+    monkeypatch.setenv("FD_ZHESI_REF_DB", populated)
+    v2 = client.post("/api/v1/synthesis/project", headers=AUTH).json()
+    assert v2["id"] != v1["id"]
+    assert v2["neighbor_layer"] == "atlas"
+    assert v2["degraded"] is False
+    assert v2["confidence"] > v1["confidence"]
+    assert v2["neighbors"][0]["name_en"] == "Plato"  # 该集群最近邻（全量参照系）
+
+    # 思想年轮：两版本并存、最新在前、旧版本仍带降级标注
+    hist = client.get("/api/v1/synthesis/projections", headers=AUTH).json()["results"]
+    assert len(hist) == 2
+    assert hist[0]["id"] == v2["id"] and hist[0]["degraded"] is False
+    assert hist[1]["id"] == v1["id"] and hist[1]["degraded"] is True
+    assert "atlas" in hist[1]["missing_layers"]
+    assert hist[1]["confidence"] < hist[0]["confidence"]
+    # 旧版本的邻居仍是种子层结果（可对比，不被新版本改写）
+    assert hist[1]["neighbors"] != hist[0]["neighbors"]
     """active 卡 <5 → 412；active ≥5 但可映射 <5 → 同样 412（带提示）。"""
     for q, p in MAPPED_15[:4]:
         _card(q, p, headers=AUTH_BOB)
@@ -230,14 +262,46 @@ def test_projection_below_threshold_412() -> None:
     assert "可映射" in r.json()["detail"]
 
 
-def test_projection_reference_unavailable_503(tmp_path, monkeypatch) -> None:
-    """参照系库空/不可用 → 明确 503（不静默产出无邻居投影）。"""
+def test_projection_degrades_when_atlas_missing(tmp_path, monkeypatch) -> None:
+    """Atlas 缺失 → 不 503，改走降级路径：仍产出投影，带 confidence 与缺失层。
+
+    spec「Atlas 缺失时谱闭环降级」：以 Wikidata 关系与手工种子生成投影与思想
+    邻居，并标注置信度下降与缺失层原因；六轴坐标不由模型推测填充。
+    """
     monkeypatch.setenv("FD_ZHESI_REF_DB", str(tmp_path / "empty-ref.db"))
     for q, p in MAPPED_15:
         _card(q, p)
     r = client.post("/api/v1/synthesis/project", headers=AUTH)
-    assert r.status_code == 503
-    assert "参照系" in r.json()["detail"]
+    assert r.status_code == 201, r.text
+    body = r.json()
+
+    # 投影照常产出（增量来自确定性 curated 表，不是模型推测）
+    assert all(0.0 <= v <= 10.0 for v in body["axes"].values())
+    assert body["mappable_count"] == 15
+
+    # 降级标注：缺 atlas，置信度下降，原因可读
+    assert body["degraded"] is True
+    assert "atlas" in body["missing_layers"]
+    assert body["confidence"] < 1.0
+    assert any("Atlas" in reason for reason in body["degradation_reasons"])
+
+    # 邻居来自手工种子层（真实 Atlas 子集），不是空、也不是编造
+    assert body["neighbor_layer"] == "manual-seed"
+    assert len(body["neighbors"]) == 8
+    assert all({"atlas_id", "name_en", "name_zh", "distance"} <= set(n)
+               for n in body["neighbors"])
+    dists = [n["distance"] for n in body["neighbors"]]
+    assert dists == sorted(dists)
+    assert body["neighbors"][0]["name_en"] in {
+        "Plato", "Augustine of Hippo", "Thomas Aquinas", "Immanuel Kant",
+        "René Descartes", "Socrates",
+    }
+
+    # 降级标注随投影存档：历史列表里也能看到（界面可标注）
+    hist = client.get("/api/v1/synthesis/projections", headers=AUTH).json()["results"]
+    assert hist[0]["degraded"] is True
+    assert hist[0]["confidence"] == body["confidence"]
+    assert "atlas" in hist[0]["missing_layers"]
 
 
 # ---- 4.4 张力簿 ----

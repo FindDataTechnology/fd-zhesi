@@ -163,13 +163,24 @@ export interface Neighbor {
   distance: number;
 }
 
+/** 映射不上六轴的卡（后端返回对象；兼容旧的字符串形态）。 */
+export type SkippedCard =
+  | string
+  | { card_id?: string; question?: string; position?: string; reason?: string };
+
 export interface Projection {
   id?: string;
   created_at?: string;
   axes: Record<string, number>;
   neighbors: Neighbor[];
   based_on_cards: string[];
-  skipped: string[];
+  skipped: SkippedCard[];
+  /** 降级标注（Atlas 缺失时）：邻居来自手工种子层，置信度下降。 */
+  degraded?: boolean;
+  confidence?: number;
+  missing_layers?: string[];
+  degradation_reasons?: string[];
+  neighbor_layer?: "atlas" | "manual-seed";
 }
 
 /** 张力簿条目（contract.py 口径：id/card_ids/description/source；防御式可选）。 */
@@ -178,6 +189,22 @@ export interface TensionItem {
   card_ids?: string[];
   description?: string;
   source?: string;
+  /** confirmed = 参照系有明确记录；candidate = 推断、尚未确认（不得表述为既成张力）。 */
+  kind?: "confirmed" | "candidate";
+  tension_type?:
+    | "contradiction"
+    | "presupposition-conflict"
+    | "value-conflict"
+    | "empirical-dispute";
+  status?: "open" | "resolved" | "dissolved";
+  basis?: Record<string, unknown> | null;
+}
+
+/** 张力簿分组返回：既成与候选分开（后端已分组，前端不必自己判）。 */
+export interface TensionList {
+  results: TensionItem[];
+  confirmed?: TensionItem[];
+  candidates?: TensionItem[];
 }
 
 export interface AnnalEntry {
@@ -219,7 +246,24 @@ export const api = {
   listProjections: () =>
     request<{ results: Projection[] }>("/api/v1/synthesis/projections", { wired: true }),
   listTensions: () =>
-    request<{ results: TensionItem[] }>("/api/v1/synthesis/tensions", { wired: true }),
+    request<TensionList>("/api/v1/synthesis/tensions", { wired: true }),
+  detectTensions: () =>
+    request<{ created: TensionItem[]; candidates: TensionItem[]; open_count: number }>(
+      "/api/v1/synthesis/detect-tensions",
+      { method: "POST", body: {}, wired: true },
+    ),
+  confirmTension: (id: string) =>
+    request<TensionItem>(`/api/v1/synthesis/tensions/${encodeURIComponent(id)}/confirm`, {
+      method: "POST",
+      body: {},
+      wired: true,
+    }),
+  ignoreTension: (id: string) =>
+    request<TensionItem>(`/api/v1/synthesis/tensions/${encodeURIComponent(id)}/ignore`, {
+      method: "POST",
+      body: {},
+      wired: true,
+    }),
 
   // 个人层（已上线）
   listCards: (status: "active" | "sealed" = "active") =>

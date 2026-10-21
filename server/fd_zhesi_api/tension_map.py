@@ -15,120 +15,140 @@ from __future__ import annotations
 TENSION_PAIRS: list[dict] = [
     {
         "questions": ("god", "god"),
+        "type": "contradiction",
         "positions": ("theism", "atheism"),
         "description": "同时持有神论与无神论：对「上帝是否存在」的直接对立表态。",
         "source": "经典张力: 有神论与无神论是自然神学传统与启蒙无神论传统间最直接的对立。",
     },
     {
         "questions": ("meta_ethics", "meta_ethics"),
+        "type": "contradiction",
         "positions": ("moral realism", "moral anti-realism"),
         "description": "同持道德实在论与道德反实在论：道德事实是否存在，直接对立。",
         "source": "经典张力: 20 世纪元伦理学主线之争（Moore 式实在论 vs Ayer/Stevenson 非认知主义）。",
     },
     {
         "questions": ("meta_ethics", "meta_ethics"),
+        "type": "contradiction",
         "positions": ("moral realism", "error theory"),
         "description": "同持道德实在论与错误论：错误论断言一切肯定性道德判断皆为假。",
         "source": "经典张力: Mackie《伦理学：发明对与错》(1977) 的错误论直接否定道德实在论。",
     },
     {
         "questions": ("morality", "morality"),
+        "type": "contradiction",
         "positions": ("non-naturalism", "error theory"),
         "description": "同持道德非自然主义与错误论：一者肯定非自然道德事实，一者断言其不存在。",
         "source": "经典张力: Moore 式非自然主义与 Mackie 式错误论在道德形而上学上不相容。",
     },
     {
         "questions": ("morality", "morality"),
+        "type": "contradiction",
         "positions": ("naturalist realism", "expressivism"),
         "description": "同持自然主义道德实在论与表达主义：道德判断有真值 vs 只是态度表达。",
         "source": "经典张力: 实在论与表达主义的元伦理学百年对立（Cornell realism vs Blackburn/Gibbard）。",
     },
     {
         "questions": ("mind", "mind"),
+        "type": "contradiction",
         "positions": ("physicalism", "non-physicalism"),
         "description": "同持物理主义与非物理主义：心灵是否可还原为物理，直接对立。",
         "source": "经典张力: 心灵哲学本体论之争（Smart/Armstrong 物理主义 vs 反物理主义传统）。",
     },
     {
         "questions": ("mind", "consciousness"),
+        "type": "presupposition-conflict",
         "positions": ("physicalism", "dualism"),
         "description": "物理主义心灵观与意识的实体二元论不相容：二元论否认心灵随附于物理。",
         "source": "经典张力: 笛卡尔式二元论与当代物理主义关于意识地位的根本冲突。",
     },
     {
         "questions": ("mind", "zombies"),
+        "type": "presupposition-conflict",
         "positions": ("physicalism", "metaphysically possible"),
         "description": "物理主义与「哲学僵尸形而上可能」不相容：僵尸可能则现象属性不随附物理。",
         "source": "经典张力: Chalmers(1996) 僵尸可设想性论证被公认为反物理主义的标准论证。",
     },
     {
         "questions": ("mind", "external_world"),
+        "type": "presupposition-conflict",
         "positions": ("physicalism", "idealism"),
         "description": "物理主义与观念论不相容：观念论否认物质实体的心灵独立存在。",
         "source": "经典张力: 贝克莱式观念论（esse est percipi）与物理主义本体论直接冲突。",
     },
     {
         "questions": ("knowledge", "knowledge"),
+        "type": "contradiction",
         "positions": ("empiricism", "rationalism"),
         "description": "同持经验主义与理性主义：知识源于经验还是理性，直接对立表态。",
         "source": "经典张力: 近代哲学认识论主轴（Locke/Hume vs Descartes/Leibniz）。",
     },
     {
         "questions": ("knowledge", "a_priori"),
+        "type": "presupposition-conflict",
         "positions": ("empiricism", "yes"),
         "description": "彻底经验主义与承认先验知识不相容：经验主义否认独立于经验的知识。",
         "source": "经典张力: Hume 的经验主义原则与 Leibniz-Kant 先验知识传统冲突（「休谟的叉子」）。",
     },
     {
         "questions": ("knowledge", "a_priori"),
+        "type": "presupposition-conflict",
         "positions": ("rationalism", "no"),
         "description": "理性主义与否认先验知识不相容：先验知识是理性主义的根基。",
         "source": "经典张力: 否认先验知识即掏空理性主义（Leibniz 对 Locke《人类理解论》的回应）。",
     },
     {
         "questions": ("free_will", "free_will"),
+        "type": "contradiction",
         "positions": ("libertarianism", "no free will"),
         "description": "同持自由意志论与「无自由意志」：自由意志是否存在，直接对立。",
         "source": "经典张力: 形而上学自由意志论与硬决定论之争（Kane vs Pereboom/Honderich）。",
     },
     {
         "questions": ("free_will", "psr"),
+        "type": "presupposition-conflict",
         "positions": ("libertarianism", "true"),
         "description": "自由意志论与充足理由律不相容：万物皆有充分理由则无原初的自由行动。",
         "source": "经典张力: Spinoza 依充足理由律否认意志自由，与自由意志论者对立。",
     },
     {
         "questions": ("abstract_objects", "abstract_objects"),
+        "type": "contradiction",
         "positions": ("Platonism", "nominalism"),
         "description": "同持柏拉图主义与唯名论：抽象对象是否存在，直接对立。",
         "source": "经典张力: 共相问题的千年之争（Plato/Frege vs Ockham/Goodman）。",
     },
     {
         "questions": ("moral_principles", "moral_principles"),
+        "type": "contradiction",
         "positions": ("moral generalism", "moral particularism"),
         "description": "同持道德普遍主义与道德殊义论：道德是否由普遍原则支配，直接对立。",
         "source": "经典张力: Kant 式普遍道德法则 vs Dancy 殊义论（particularism）。",
     },
     {
         "questions": ("well_being", "well_being"),
+        "type": "value-conflict",
         "positions": ("hedonism", "objective list"),
         "description": "同持快乐主义与客观清单论：福祉仅是快乐还是包含客观善，直接对立。",
         "source": "经典张力: Bentham/Mill 快乐主义与 Aristotle/Nussbaum 客观清单论之争。",
     },
     {
         "questions": ("consciousness", "consciousness"),
+        "type": "presupposition-conflict",
         "positions": ("dualism", "eliminativism"),
         "description": "同持意识二元论与取消主义：感受质有本体地位 vs 意识概念终将被取消。",
         "source": "经典张力: 笛卡尔传统与 Churchland 式取消主义关于意识存在的对立。",
     },
     {
         "questions": ("metaphilosophy", "metaphilosophy"),
+        "type": "contradiction",
         "positions": ("naturalism", "non-naturalism"),
         "description": "同持哲学自然主义与非自然主义：哲学是否连续于自然科学，直接对立。",
         "source": "经典张力: Quine 式自然化哲学与 Strawson 式先验/概念传统之争。",
     },
     {
         "questions": ("politics", "politics"),
+        "type": "value-conflict",
         "positions": ("libertarianism", "communitarianism"),
         "description": "同持自由至上主义与社群主义：个人自由优先还是共同体优先，直接对立。",
         "source": "经典张力: Nozick 自由至上主义与 Sandel/MacIntyre 社群主义的当代政治哲学对立。",
@@ -149,3 +169,28 @@ for _entry in TENSION_PAIRS:
 def lookup_tension(qa: str, pa: str, qb: str, pb: str) -> dict | None:
     """两已归一立场 (question_key, position) 是否构成已知张力对；无则 None。"""
     return _TENSION_INDEX.get(_pair_key((qa, qb), (pa, pb)))
+
+
+# 张力类型词表（zhesi-atlas-resilience 5.6 / spec「张力类型与状态」）
+TENSION_TYPES = (
+    "contradiction",            # 直接对立：同一问题的相反表态，或明确不相容的组合
+    "presupposition-conflict",  # 预设冲突：共享前提推出不相容结论
+    "value-conflict",           # 价值冲突：事实一致、权重/优先序不同
+    "empirical-dispute",        # 经验分歧：价值一致、对事实判断不同
+)
+
+
+def candidate_type(overlap: list[str], opposed: bool) -> str:
+    """候选张力的类型判定（确定性规则，不猜测）。
+
+    - 共享前提 + 结论相反 → contradiction（共享预设下直接对立）
+    - 共享前提但结论不相反 → presupposition-conflict（共享预设本身构成压力）
+    - 无共享前提（如仅由影响图 critical 关系推断）→ value-conflict
+      （人物间的批判传统通常落在价值优先序上；经验分歧与其它情形需人工改判）
+
+    `empirical-dispute` 无法从结构自动判定（需要事实层面的比对），故只作为
+    词表成员存在，由人工在确认时改判——不自动冒充。
+    """
+    if overlap:
+        return "contradiction" if opposed else "presupposition-conflict"
+    return "value-conflict"

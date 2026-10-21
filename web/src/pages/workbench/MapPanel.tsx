@@ -14,6 +14,109 @@ function distanceWidth(distance: number, max: number): number {
   return Math.max(0, Math.min(100, (distance / max) * 100));
 }
 
+/**
+ * 降级标注（spec「Atlas 缺失时谱闭环降级」）：把缺失层与置信度摆在投影上方，
+ * 不让用户把降级结果误读成完整结果。
+ */
+export function DegradationNote({ p }: { p: Projection }) {
+  const { t } = useTranslation();
+  const missing = p.missing_layers ?? [];
+  if (!p.degraded && missing.length === 0) return null;
+  const confidence = Number.isFinite(p.confidence) ? (p.confidence as number) : null;
+  return (
+    <div
+      className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900"
+      role="status"
+    >
+      <p className="font-medium">
+        {t("workbench.map.degradedHeading")}
+        {confidence !== null
+          ? ` · ${t("workbench.map.confidence", { value: Math.round(confidence * 100) })}`
+          : ""}
+      </p>
+      {missing.length > 0 ? (
+        <p className="mt-1 text-xs">
+          {t("workbench.map.missingLayers")}：{missing.join("、")}
+          {p.neighbor_layer === "manual-seed"
+            ? ` · ${t("workbench.map.seedNeighbors")}`
+            : ""}
+        </p>
+      ) : null}
+      {(p.degradation_reasons ?? []).length > 0 ? (
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-xs">
+          {(p.degradation_reasons ?? []).map((reason) => (
+            <li key={reason}>{reason}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+/** 张力条目：候选与既成在表述上必须可区分（spec「候选不冒充既成张力」）。 */
+function TensionEntry({
+  item,
+  onConfirm,
+  onIgnore,
+}: {
+  item: TensionItem;
+  onConfirm?: (id: string) => void;
+  onIgnore?: (id: string) => void;
+}) {
+  const { t } = useTranslation();
+  const isCandidate = item.kind === "candidate";
+  return (
+    <li
+      className={
+        isCandidate
+          ? "rounded-lg border border-dashed border-neutral-300 bg-neutral-50 p-4 text-sm"
+          : "rounded-lg border border-neutral-200 bg-white p-4 text-sm"
+      }
+    >
+      <p className="flex flex-wrap items-center gap-2 text-xs text-neutral-500">
+        <span
+          className={
+            isCandidate
+              ? "rounded bg-neutral-200 px-2 py-0.5 text-neutral-700"
+              : "rounded bg-neutral-900 px-2 py-0.5 text-white"
+          }
+        >
+          {isCandidate ? t("workbench.map.kindCandidate") : t("workbench.map.kindConfirmed")}
+        </span>
+        {item.tension_type ? (
+          <span>{t(`workbench.map.tensionType.${item.tension_type}`, { defaultValue: item.tension_type })}</span>
+        ) : null}
+        {item.status ? <span>· {item.status}</span> : null}
+      </p>
+      <p className="mt-2 text-neutral-800">{item.description ?? item.id}</p>
+      <p className="mt-1 text-xs text-neutral-400">
+        {item.source ?? ""}
+        {item.card_ids?.length
+          ? ` · ${t("workbench.map.relatedCards", { count: item.card_ids.length })}`
+          : ""}
+      </p>
+      {isCandidate ? (
+        <div className="mt-3 flex gap-2">
+          <button
+            type="button"
+            onClick={() => onConfirm?.(item.id)}
+            className="rounded bg-neutral-900 px-3 py-1 text-xs text-white hover:bg-neutral-700"
+          >
+            {t("workbench.map.confirmCandidate")}
+          </button>
+          <button
+            type="button"
+            onClick={() => onIgnore?.(item.id)}
+            className="rounded border border-neutral-300 px-3 py-1 text-xs text-neutral-700 hover:bg-neutral-100"
+          >
+            {t("workbench.map.ignoreCandidate")}
+          </button>
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
 // ---- 视图（显式状态，可独立渲染降级态） ----
 
 export function MapView({
@@ -23,6 +126,8 @@ export function MapView({
   tensions,
   annals,
   history,
+  onConfirmTension,
+  onIgnoreTension,
 }: {
   count: Loadable<number>;
   projection: Loadable<Projection>;
@@ -30,6 +135,8 @@ export function MapView({
   tensions: Loadable<TensionItem[]>;
   annals: Loadable<AnnalEntry[]>;
   history: Loadable<Projection[]>;
+  onConfirmTension?: (id: string) => void;
+  onIgnoreTension?: (id: string) => void;
 }) {
   const { t } = useTranslation();
   const canProject = count.status === "ready" && count.data >= MIN_CARDS_FOR_PROJECTION;
@@ -70,7 +177,6 @@ export function MapView({
         <ErrorBox message={projection.message} code={projection.code} />
       ) : null}
       {projection.status === "ready" ? <ProjectionView p={projection.data} /> : null}
-
       {/* 张力簿 */}
       <div>
         <SectionTitle>{t("workbench.map.tensions")}</SectionTitle>
@@ -89,17 +195,36 @@ export function MapView({
           <EmptyLine>{t("workbench.map.tensionsEmpty")}</EmptyLine>
         ) : null}
         {tensions.status === "ready" && tensions.data.length > 0 ? (
-          <ul className="mt-3 space-y-2">
-            {tensions.data.map((tn) => (
-              <li key={tn.id} className="rounded-lg border border-neutral-200 bg-white p-4 text-sm">
-                <p className="text-neutral-800">{tn.description ?? tn.id}</p>
-                <p className="mt-1 text-xs text-neutral-400">
-                  {tn.source ?? ""}
-                  {tn.card_ids?.length ? ` · ${t("workbench.map.relatedCards", { count: tn.card_ids.length })}` : ""}
-                </p>
-              </li>
-            ))}
-          </ul>
+          <div className="mt-3 space-y-4">
+            {/* 既成张力：参照系有明确记录 */}
+            <ul className="space-y-2">
+              {tensions.data
+                .filter((tn) => tn.kind !== "candidate")
+                .map((tn) => (
+                  <TensionEntry key={tn.id} item={tn} />
+                ))}
+            </ul>
+            {/* 候选：推断所得，明确标注「尚未确认」，可确认或忽略 */}
+            {tensions.data.some((tn) => tn.kind === "candidate") ? (
+              <div>
+                <h3 className="text-xs font-medium text-neutral-500">
+                  {t("workbench.map.tensionCandidates")}
+                </h3>
+                <ul className="mt-2 space-y-2">
+                  {tensions.data
+                    .filter((tn) => tn.kind === "candidate")
+                    .map((tn) => (
+                      <TensionEntry
+                        key={tn.id}
+                        item={tn}
+                        onConfirm={onConfirmTension}
+                        onIgnore={onIgnoreTension}
+                      />
+                    ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
         ) : null}
       </div>
 
@@ -180,6 +305,7 @@ function ProjectionView({ p }: { p: Projection }) {
   const maxDist = Math.max(...neighbors.map((nb) => nb.distance), 0);
   return (
     <div className="space-y-5">
+      <DegradationNote p={p} />
       <div className="grid gap-6 md:grid-cols-2">
         <div>
           <h3 className="text-sm font-medium text-neutral-500">{t("workbench.map.radar")}</h3>
@@ -216,7 +342,14 @@ function ProjectionView({ p }: { p: Projection }) {
       <div className="space-y-1 text-xs text-neutral-500">
         <p>{t("workbench.map.basedOn", { count: p.based_on_cards?.length ?? 0 })}</p>
         {p.skipped?.length ? (
-          <p>{t("workbench.map.skipped", { ids: p.skipped.join("、") })}</p>
+          <p>
+            {t("workbench.map.skipped", {
+              ids: p.skipped
+                .map((s) => (typeof s === "string" ? s : s?.card_id ?? ""))
+                .filter(Boolean)
+                .join("、"),
+            })}
+          </p>
         ) : null}
       </div>
     </div>
@@ -282,6 +415,24 @@ export default function MapPanel() {
     }
   };
 
+  const onConfirmTension = async (id: string) => {
+    try {
+      await api.confirmTension(id);
+      await loadTensions(); // 状态流转后重新拉取（留痕在服务端）
+    } catch (e) {
+      setTensions(mapApiError(e));
+    }
+  };
+
+  const onIgnoreTension = async (id: string) => {
+    try {
+      await api.ignoreTension(id);
+      await loadTensions();
+    } catch (e) {
+      setTensions(mapApiError(e));
+    }
+  };
+
   return (
     <MapView
       count={count}
@@ -290,6 +441,8 @@ export default function MapPanel() {
       tensions={tensions}
       annals={annals}
       history={history}
+      onConfirmTension={(id) => void onConfirmTension(id)}
+      onIgnoreTension={(id) => void onIgnoreTension(id)}
     />
   );
 }

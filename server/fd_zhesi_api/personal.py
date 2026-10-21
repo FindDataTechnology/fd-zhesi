@@ -91,6 +91,28 @@ MIGRATIONS = [
     );
     CREATE INDEX idx_projections_user ON projections(user_id, created_at);
     """,
+    # 0004：Atlas 降级标注（zhesi-atlas-resilience 2.1/2.2）+ 论证结构（4.1）
+    """
+    ALTER TABLE projections ADD COLUMN missing_layers TEXT;  -- JSON [layer]
+    ALTER TABLE projections ADD COLUMN confidence REAL;
+    ALTER TABLE stance_cards ADD COLUMN argument TEXT;       -- JSON 论证结构（可选）
+    """,
+    # 0005：张力候选与类型/状态（5.4-5.6）
+    """
+    ALTER TABLE tensions ADD COLUMN kind TEXT NOT NULL DEFAULT 'confirmed';
+    ALTER TABLE tensions ADD COLUMN basis TEXT;              -- JSON 推断依据（候选）
+    ALTER TABLE tensions ADD COLUMN tension_type TEXT NOT NULL DEFAULT 'contradiction';
+    CREATE TABLE tension_events (
+        id TEXT PRIMARY KEY,
+        tension_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        from_status TEXT,
+        to_status TEXT NOT NULL,
+        at TEXT NOT NULL,
+        detail TEXT
+    );
+    CREATE INDEX idx_tension_events ON tension_events(tension_id, at);
+    """,
 ]
 
 
@@ -139,10 +161,52 @@ def card_row_to_dict(r: sqlite3.Row) -> dict:
         "my_response": r["my_response"],
         "status": r["status"],
         "stability": r["stability"],
+        "argument": _argument_of(r),
         "created_at": r["created_at"],
         "updated_at": r["updated_at"],
         "sealed_at": r["sealed_at"],
     }
+
+
+def empty_argument(position: str = "") -> dict:
+    """空论证结构：旧卡（0004 之前）与未填论证的卡都以此形态读取。"""
+    return {"claim": position or None, "premises": [], "edges": []}
+
+
+def _argument_of(r: sqlite3.Row) -> dict:
+    """读 argument 列（旧库/旧行没有该列或为 NULL → 空论证，不抛错）。"""
+    try:
+        raw = r["argument"]
+    except (IndexError, KeyError):
+        raw = None
+    if not raw:
+        return empty_argument(r["position"])
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return empty_argument(r["position"])
+    if not isinstance(parsed, dict):
+        return empty_argument(r["position"])
+    return {
+        "claim": parsed.get("claim") or r["position"],
+        "premises": parsed.get("premises") or [],
+        "edges": parsed.get("edges") or [],
+    }
+
+
+def set_argument(
+    conn: sqlite3.Connection, user_id: str, card_id: str, argument: dict,
+) -> dict | None:
+    """写入论证结构（散文式字段不动；spec「结构化论证与散文字段共存」）。"""
+    card = get_card(conn, user_id, card_id)
+    if not card or card["status"] != "active":
+        return None
+    conn.execute(
+        "UPDATE stance_cards SET argument=?, updated_at=? WHERE id=?",
+        (json.dumps(argument, ensure_ascii=False), now(), card_id),
+    )
+    conn.commit()
+    return get_card(conn, user_id, card_id)
 
 
 def create_card(
@@ -266,6 +330,119 @@ def audit(
         (new_id(), user_id, action, resource, outcome, detail, now()),
     )
     conn.commit()
+
+
+# ---- 张力簿（5.4-5.6：候选与既成分离、类型与状态可追溯） ----
+
+TENSION_TYPES = (
+    "contradiction",
+    "presupposition-conflict",
+    "value-conflict",
+    "empirical-dispute",
+)
+TENSION_STATUSES = ("open", "resolved", "dissolved")
+TENSION_KINDS = ("confirmed", "candidate")
+
+
+def tension_row_to_dict(r: sqlite3.Row) -> dict:
+    def _col(name, default=None):
+        try:
+            return r[name]
+        except (IndexError, KeyError):
+            return default
+
+    basis_raw = _col("basis")
+    try:
+        basis = json.loads(basis_raw) if basis_raw else None
+    except (TypeError, ValueError):
+        basis = None
+    return {
+        "id": r["id"],
+        "card_ids": json.loads(r["card_ids"]),
+        "description": r["description"],
+        "source": r["source"],
+        "status": r["status"],
+        "kind": _col("kind", "confirmed"),
+        "tension_type": _col("tension_type", "contradiction"),
+        "basis": basis,
+        "created_at": r["created_at"],
+        "resolved_at": r["resolved_at"],
+    }
+
+
+def record_tension_event(
+    conn: sqlite3.Connection, user_id: str, tension_id: str,
+    from_status: str | None, to_status: str, detail: str | None = None,
+) -> None:
+    """状态流转留痕（spec「状态变化可追溯」）。"""
+    conn.execute(
+        "INSERT INTO tension_events (id, tension_id, user_id, from_status, to_status, at, detail)"
+        " VALUES (?,?,?,?,?,?,?)",
+        (new_id(), tension_id, user_id, from_status, to_status, now(), detail),
+    )
+    conn.commit()
+
+
+def tension_events(conn: sqlite3.Connection, user_id: str, tension_id: str) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM tension_events WHERE tension_id=? AND user_id=? ORDER BY at, rowid",
+        (tension_id, user_id),
+    ).fetchall()
+    return [
+        {
+            "id": r["id"],
+            "from_status": r["from_status"],
+            "to_status": r["to_status"],
+            "at": r["at"],
+            "detail": r["detail"],
+        }
+        for r in rows
+    ]
+
+
+def update_tension_status(
+    conn: sqlite3.Connection, user_id: str, tension_id: str,
+    new_status: str, detail: str | None = None,
+) -> dict | None:
+    """张力状态流转（open → resolved / dissolved；候选 → confirmed 亦走此路）。"""
+    if new_status not in TENSION_STATUSES:
+        raise ValueError(f"status 只支持 {list(TENSION_STATUSES)}")
+    row = conn.execute(
+        "SELECT * FROM tensions WHERE id=? AND user_id=?", (tension_id, user_id)
+    ).fetchone()
+    if row is None:
+        return None
+    old = row["status"]
+    if old == new_status:
+        return tension_row_to_dict(row)
+    ts = now()
+    conn.execute(
+        "UPDATE tensions SET status=?, resolved_at=? WHERE id=?",
+        (new_status, ts if new_status != "open" else None, tension_id),
+    )
+    conn.commit()
+    record_tension_event(conn, user_id, tension_id, old, new_status, detail)
+    row = conn.execute(
+        "SELECT * FROM tensions WHERE id=?", (tension_id,)
+    ).fetchone()
+    return tension_row_to_dict(row)
+
+
+def confirm_tension(
+    conn: sqlite3.Connection, user_id: str, tension_id: str,
+) -> dict | None:
+    """候选升级为既成张力（kind: candidate → confirmed，状态保持 open）。"""
+    row = conn.execute(
+        "SELECT * FROM tensions WHERE id=? AND user_id=?", (tension_id, user_id)
+    ).fetchone()
+    if row is None:
+        return None
+    conn.execute("UPDATE tensions SET kind='confirmed' WHERE id=?", (tension_id,))
+    conn.commit()
+    record_tension_event(conn, user_id, tension_id, row["status"], row["status"],
+                         detail="candidate→confirmed")
+    row = conn.execute("SELECT * FROM tensions WHERE id=?", (tension_id,)).fetchone()
+    return tension_row_to_dict(row)
 
 
 # ---- 跨线契约授权（task 5.1 的数据面） ----

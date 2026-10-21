@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -41,13 +43,16 @@ def test_grant_scoped_delivery() -> None:
     r = client.get("/api/v1/contract/cards", params={"consumer": "juchuang"}, headers=AUTH)
     assert r.status_code == 200
     body = r.json()
-    assert body["contract_version"] == "1"
+    assert body["contract_version"] == "2"
     assert body["consumer"] == "juchuang"
     assert len(body["cards"]) == 1
     c = body["cards"][0]
-    # 契约字段集完整性（v1）：剧创依赖的每个字段都在
-    assert set(c) == {"id", "question", "question_ref", "position",
-                      "stability", "strongest_objection", "as_of"}
+    # 契约字段集完整性：v1 字段一个不少，v2 新增 argument 可选字段在场
+    v1_fields = {"id", "question", "question_ref", "position",
+                 "stability", "strongest_objection", "as_of"}
+    assert set(c) >= v1_fields and "argument" in set(c)
+    # 新增字段可选：旧卡（未填论证）以空论证形态下发，散文字段不受影响
+    assert c["argument"] == {"claim": "compatibilism", "premises": [], "edges": []}
     assert c["id"] == card["id"] and c["position"] == "compatibilism"
     # 张力未授权 → 不下发张力数据
     assert body["tensions"] == []
@@ -57,7 +62,7 @@ def test_grant_scoped_delivery() -> None:
                 headers=AUTH)
     body2 = client.get("/api/v1/contract/cards", params={"consumer": "juchuang"},
                        headers=AUTH).json()
-    assert "tensions" in body2 and body2["contract_version"] == "1"
+    assert "tensions" in body2 and body2["contract_version"] == "2"
 
 
 def test_backward_compat_additive_only() -> None:
@@ -78,3 +83,40 @@ def test_grant_validation() -> None:
     r = client.post("/api/v1/grants", json={"consumer": "juchuang", "card_kinds": ["secret"]},
                     headers=AUTH)
     assert r.status_code == 422
+
+
+def test_v2_tension_fields_are_additive() -> None:
+    """v2 契约的张力新增 kind/tension_type/status，且 v1 字段一个不少（6.3）。"""
+    from fd_zhesi_api import personal, synthesis
+
+    _seed_card()
+    conn = personal.connect()
+    personal.migrate(conn)
+    tid = personal.new_id()
+    ts = personal.now()
+    conn.execute(
+        "INSERT INTO tensions (id, user_id, card_ids, description, source, status,"
+        " created_at, kind, tension_type) VALUES (?,?,?,?,?,'open',?, 'candidate',"
+        " 'value-conflict')",
+        (tid, "alice", json.dumps(["c1", "c2"]), "d", "s", ts),
+    )
+    conn.commit()
+    conn.close()
+
+    client.post("/api/v1/grants", json={"consumer": "juchuang",
+                                        "card_kinds": ["stance", "tension"]}, headers=AUTH)
+    body = client.get("/api/v1/contract/cards", params={"consumer": "juchuang"},
+                      headers=AUTH).json()
+    assert body["contract_version"] == "2"
+    assert len(body["tensions"]) == 1
+    t = body["tensions"][0]
+    # v1 字段仍在
+    assert set(t) >= {"id", "card_ids", "description", "source"}
+    # v2 新增字段在场且取合法值
+    assert t["kind"] == "candidate"
+    assert t["tension_type"] == "value-conflict"
+    assert t["status"] == "open"
+    assert t["tension_type"] in personal.TENSION_TYPES
+    # 旧消费方按 v1 字段取子集照常工作
+    v1_subset = {k: t[k] for k in ("id", "card_ids", "description", "source")}
+    assert v1_subset["description"] == "d"
