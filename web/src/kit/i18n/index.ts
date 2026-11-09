@@ -8,20 +8,37 @@
 
 export type Locale = 'zh' | 'en'
 
+/** 插值参数；`defaultValue` 在键缺失时回退（i18next 同形） */
+export type TParams = Record<string, string | number> & { defaultValue?: string }
+
 export interface I18n<T> {
   locale(): Locale
   setLocale(next: Locale): void
-  /** 取文案；路径如 'nav.home'。缺失时返回路径本身而不是空串（便于发现） */
-  t(path: string): string
+  /**
+   * 取文案；路径如 'nav.home'。
+   * - 缺失时返回路径本身（便于发现，而不是给用户看空白）；
+   * - `params` 支持 `{{name}}` 插值（i18next 同形，迁移时不改调用点）。
+   */
+  t(path: string, params?: TParams): string
+  /** 取原始节点（数组/对象），对应 i18next 的 `returnObjects` */
+  raw(path: string): unknown
   messages(): T
+  /** 订阅语言变化（React 钩子用） */
+  subscribe(listener: () => void): () => void
+  /** 当前语言（i18next 同形读取，便于宿主平滑替换） */
+  readonly language: Locale
+  /** i18next 同形别名；等价于 `setLocale`，返回 Promise 以兼容 `void i18n.changeLanguage(...)` 用法 */
+  changeLanguage(next: Locale): Promise<void>
 }
 
 /** 叶子一律放宽为 string，但**键结构必须逐一相同**。 */
 export type SameShape<T> = T extends string
   ? string
-  : T extends Record<string, unknown>
-    ? { [K in keyof T]: SameShape<T[K]> }
-    : string
+  : T extends readonly (infer U)[]
+    ? readonly SameShape<U>[]
+    : T extends Record<string, unknown>
+      ? { [K in keyof T]: SameShape<T[K]> }
+      : T
 
 function walk(obj: unknown, prefix = '', out: Record<string, string> = {}) {
   if (obj && typeof obj === 'object') {
@@ -81,16 +98,51 @@ export function createI18n<T extends Record<string, unknown>>(options: I18nOptio
     en: walk(en),
   }
   let current: Locale = options.initial ?? options.detect?.() ?? 'zh'
+  const listeners = new Set<() => void>()
+
+  const interpolate = (value: string, params?: TParams): string => {
+    if (!params) return value
+    return value.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (whole, key: string) => {
+      const v = params[key]
+      return v === undefined ? whole : String(v)
+    })
+  }
 
   return {
     locale: () => current,
     setLocale(next: Locale) {
+      if (next === current) return
       current = next
+      for (const fn of [...listeners]) fn()
     },
-    t(path: string): string {
+    t(path: string, params?: TParams): string {
       const value = tables[current][path]
-      return value ?? path
+      if (value === undefined) return params?.defaultValue ?? path
+      return interpolate(value, params)
+    },
+    raw(path: string): unknown {
+      let node: unknown = current === 'zh' ? zh : en
+      for (const segment of path.split('.')) {
+        if (node && typeof node === 'object' && segment in (node as Record<string, unknown>)) {
+          node = (node as Record<string, unknown>)[segment]
+        } else {
+          return undefined
+        }
+      }
+      return node
     },
     messages: () => (current === 'zh' ? zh : en) as unknown as T,
+    get language() {
+      return current
+    },
+    async changeLanguage(next: Locale) {
+      this.setLocale(next)
+    },
+    subscribe(listener: () => void) {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
   }
 }

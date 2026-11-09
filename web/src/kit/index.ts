@@ -12,5 +12,8 @@ export type { I18n, Locale, I18nOptions } from './i18n/index'
 export { createTransport, TransportError, redact } from './transport/index'
 export type { Transport, TransportOptions } from './transport/index'
 
+export { useI18n } from './i18n/react'
+export type { UseI18nResult } from './i18n/react'
+
 export { Layout, renderNavItem } from './shell/Layout'
 export type { LayoutProps, NavItem, ShellOptions } from './shell/Layout'

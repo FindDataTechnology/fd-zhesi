@@ -15,6 +15,16 @@ export const API_BASE: string = (() => {
 export const TOKEN_KEY = "zhesi_token";
 const TIMEOUT_MS = 30_000;
 
+// 续期入口：logto 依赖 client.setToken，故延迟导入避免模块环
+async function ensureFreshToken(): Promise<string | null> {
+  try {
+    const mod = await import("./logto");
+    return await mod.ensureFreshToken();
+  } catch {
+    return null;
+  }
+}
+
 // ---- token 存取（非浏览器环境退化为内存 shim，测试可用） ----
 
 const memoryStore = new Map<string, string>();
@@ -79,14 +89,25 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const hasBody = opts.body !== undefined;
   if (hasBody) headers["Content-Type"] = "application/json";
 
-  let resp: Response;
-  try {
-    resp = await fetch(url, {
+  const send = () =>
+    fetch(url, {
       method: opts.method ?? (hasBody ? "POST" : "GET"),
       headers,
       body: hasBody ? JSON.stringify(opts.body) : undefined,
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
+
+  let resp: Response;
+  try {
+    resp = await send();
+    // 401 → 静默续期一次后重放（只重放一次，避免死循环）
+    if (resp.status === 401) {
+      const fresh = await ensureFreshToken();
+      if (fresh) {
+        headers.Authorization = `Bearer ${fresh}`;
+        resp = await send();
+      }
+    }
   } catch {
     // 网络拒绝 / DNS / CORS / 超时（AbortError/TimeoutError）→ 接线中降级
     throw new ApiUnavailableError();

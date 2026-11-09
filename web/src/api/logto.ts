@@ -1,100 +1,88 @@
-// Logto OIDC 登录流（authorization code + PKCE，原生 fetch/crypto，零依赖）。
-// token 写入 localStorage['zhesi_token']——与 api/client.ts 的既有读取约定一致。
+// 哲思（zhesi）登录：内核换成共享壳（change lex-web-shell-convergence 6.3）。
+//
+// 原先这份是从实论（fd-shilun）同源的 103 行残版：只有 code→id_token，
+// **没有 refresh**——会话一过期就得重新登录。切到壳后获得静默续期。
+//
+// 对外形状保持不变（currentToken / isLoggedIn / login / handleCallback / logout），
+// 所以 App.tsx 与 client.ts 的调用点不动。
+//
+// 两个本仓特有的点必须保留：
+// 1. issuer 传**基地址**（不含 /oidc）：壳拼 `${issuer}/oidc/auth`，传完整
+//    issuer 会拼出 /oidc/oidc/auth（实论侧已踩过并被回归用例抓住）。
+// 2. 登出仍跳 Logto 的 `/session/end`（壳的 logoutLocal 只清本地会话）。
+import { createAuth } from '../kit/auth/index'
+import { setToken } from './client'
 
-const ISSUER = "https://auth.finddatatech.cloud/oidc";
-const CLIENT_ID = "8l4ogqpoino6uwvlri5wa"; // Logto: zhesi-workbench（SPA）
-const REDIRECT_URI = `${window.location.origin}/workbench`;
-const SCOPE = "openid profile offline_access";
+const ISSUER_BASE = 'https://auth.finddatatech.cloud'
+const CLIENT_ID = '8l4ogqpoino6uwvlri5wa' // Logto: zhesi-workbench（SPA）
+const SCOPE = 'openid profile offline_access'
 
-const TOKEN_KEY = "zhesi_token";
-const VERIFIER_KEY = "zhesi_pkce_verifier";
-const STATE_KEY = "zhesi_oidc_state";
+/** 惰性构造：回跳地址依赖 window.location.origin，模块加载期读它会让本文件在 node 下抛。 */
+let instance: ReturnType<typeof createAuth> | null = null
+function auth() {
+  if (!instance) {
+    instance = createAuth({
+      fetchConfig: async () => ({
+        configured: true,
+        issuer: ISSUER_BASE,
+        client_id: CLIENT_ID,
+        scopes: SCOPE.split(' '),
+        organization_required: false,
+        missing: [],
+      }),
+      redirectUri: `${window.location.origin}/workbench`,
+      storagePrefix: 'zhesi',
+      tokenStorage: 'session',
+    })
+  }
+  return instance
+}
 
 export function currentToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  return auth().loadSession()?.idToken ?? null
 }
 
 export function isLoggedIn(): boolean {
-  return Boolean(currentToken());
-}
-
-function randomString(len = 48): string {
-  const bytes = new Uint8Array(len);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(36).padStart(2, "0")).join("").slice(0, 64);
-}
-
-async function sha256B64Url(input: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
-  return btoa(String.fromCharCode(...new Uint8Array(digest)))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
+  return Boolean(currentToken())
 }
 
 export async function login(): Promise<void> {
-  const verifier = randomString();
-  const state = randomString(16);
-  localStorage.setItem(VERIFIER_KEY, verifier);
-  localStorage.setItem(STATE_KEY, state);
-  const challenge = await sha256B64Url(verifier);
-  const params = new URLSearchParams({
-    client_id: CLIENT_ID,
-    redirect_uri: REDIRECT_URI,
-    response_type: "code",
-    scope: SCOPE,
-    state,
-    code_challenge: challenge,
-    code_challenge_method: "S256",
-  });
-  window.location.assign(`${ISSUER}/auth?${params}`);
+  await auth().beginLogin()
 }
 
-/** /workbench 挂载时调用：带 code 回跳则换 token，成功后清 URL 参数。 */
 export async function handleCallback(): Promise<boolean> {
-  const url = new URL(window.location.href);
-  const code = url.searchParams.get("code");
-  const state = url.searchParams.get("state");
-  if (!code) return false;
-  const expected = localStorage.getItem(STATE_KEY);
-  if (!state || !expected || state !== expected) {
-    url.searchParams.delete("code");
-    url.searchParams.delete("state");
-    window.history.replaceState({}, "", url.pathname);
-    return false;
+  try {
+    const result = await auth().completeLogin()
+    if (!result.ok) return false
+    const token = auth().loadSession()?.idToken
+    if (token) setToken(token)
+    return Boolean(token)
+  } catch {
+    return false
   }
-  const verifier = localStorage.getItem(VERIFIER_KEY) ?? "";
-  const body = new URLSearchParams({
-    grant_type: "authorization_code",
-    code,
-    redirect_uri: REDIRECT_URI,
-    client_id: CLIENT_ID,
-    code_verifier: verifier,
-  });
-  const resp = await fetch(`${ISSUER}/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
-  url.searchParams.delete("code");
-  url.searchParams.delete("state");
-  window.history.replaceState({}, "", url.pathname);
-  localStorage.removeItem(STATE_KEY);
-  localStorage.removeItem(VERIFIER_KEY);
-  if (!resp.ok) return false;
-  const token = await resp.json();
-  if (token.id_token) {
-    localStorage.setItem(TOKEN_KEY, token.id_token);
-    return true;
-  }
-  return false;
 }
 
+/**
+ * 静默续期：受保护请求前调用；续不上返回 null（调用方按需重新登录）。
+ */
+export async function ensureFreshToken(): Promise<string | null> {
+  try {
+    const session = await auth().ensureFresh()
+    if (!session) return null
+    setToken(session.idToken)
+    return session.idToken
+  } catch {
+    return null
+  }
+}
+
+/** 登出：清本地会话后跳 Logto 的 session/end（该跳转是本仓既有行为）。 */
 export function logout(): void {
-  localStorage.removeItem(TOKEN_KEY);
+  auth().logoutLocal()
+  setToken('')
   const params = new URLSearchParams({
     client_id: CLIENT_ID,
     post_logout_redirect_uri: `${window.location.origin}/`,
-  });
-  window.location.assign(`${ISSUER}/session/end?${params}`);
+  })
+  window.location.assign(`${ISSUER_BASE}/oidc/session/end?${params}`)
 }
