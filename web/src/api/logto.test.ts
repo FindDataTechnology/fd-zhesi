@@ -124,6 +124,54 @@ describe('哲思登录', () => {
     expect(currentToken()).toBe(token)
   })
 
+  it('登录全链：登录 → 受保护请求带 Bearer → 续期 → 重放 → 退出后不可达', async () => {
+    await login()
+    expect(assigned[0]).toContain('https://auth.finddatatech.cloud/oidc/auth?')
+    const pkceRaw = sessionStore.getItem('zhesi.pkce')
+    expect(pkceRaw).toBeTruthy()
+    const pkce = JSON.parse(pkceRaw as string)
+
+    const shortExp = Math.floor(Date.now() / 1000) + 5
+    installWindow('https://zhesi.test/workbench')
+    sessionStore.setItem('zhesi.pkce', pkceRaw as string)
+    ;(globalThis as unknown as { window: { location: { href: string } } }).window.location.href =
+      `https://zhesi.test/workbench?code=c-1&state=${pkce.state}`
+
+    const seenAuth: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+        const u = String(url)
+        if (u.includes('/oidc/token')) {
+          const body = String(init?.body ?? '')
+          const isRefresh = body.includes('grant_type=refresh_token')
+          return {
+            ok: true,
+            status: 200,
+            json: async () =>
+              isRefresh
+                ? { id_token: idToken(Math.floor(Date.now() / 1000) + 3600), refresh_token: 'r-2' }
+                : { id_token: idToken(shortExp), refresh_token: 'r-1' },
+          } as Response
+        }
+        seenAuth.push(String(new Headers(init?.headers).get('Authorization')))
+        if (seenAuth.length === 1) return new Response('expired', { status: 401 })
+        return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }),
+    )
+
+    expect(await handleCallback()).toBe(true)
+
+    const { api } = await import('./client')
+    await api.project()
+    expect(seenAuth.length).toBe(2)
+    expect(seenAuth[1]).not.toBe(seenAuth[0])
+
+    logout()
+    expect(currentToken()).toBeNull()
+    expect(localStore.getItem('zhesi_token')).toBeNull()
+  })
+
   it('登出跳 Logto session/end 并清本地 token', () => {
     localStore.setItem('zhesi_token', 'x')
     logout()
