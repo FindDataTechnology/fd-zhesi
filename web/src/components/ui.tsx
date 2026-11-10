@@ -1,15 +1,34 @@
-/** 工作台共用小部件：状态徽标、降级/错误/加载盒、分节标题。无外部 UI 库。 */
+/** 工作台共用小部件：状态徽标、降级/错误/加载盒、分节标题。
+ *
+ *  状态类控件（加载/错误/空态、稳定性徽标）自 2026-11-10 起改由共享壳原语实现
+ *  （`src/kit/primitives`，change lex-web-shell-convergence 5.3）。本文件保留同名导出，
+ *  调用点零改动；**视觉不变**——尺寸/间距/字重/配色仍用本宿主原来的类名，
+ *  经 `className` / `toneClassName` 原样传给原语。
+ *
+ *  `DegradeBox` 刻意不并入原语：它不是通用错误态，而是"诚实降级契约"的呈现
+ *  （问辩谱未接线），换成通用 ErrorState 会丢语义。
+ */
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { Stability } from "../api/client";
 import { Loadable } from "../api/state";
+import {
+  EmptyState,
+  ErrorState,
+  LoadingState,
+  StatusPill,
+  type StatusTone,
+} from "../kit/primitives/index";
 
+/** 加载态（原语：LoadingState）。外观类名逐字沿用旧值。 */
 export function Loading() {
   const { t } = useTranslation();
-  return <p className="animate-pulse text-sm text-neutral-400">{t("workbench.loading")}</p>;
+  return (
+    <LoadingState label={t("workbench.loading")} className="animate-pulse text-sm text-neutral-400" />
+  );
 }
 
-/** 「该能力接线中」降级盒（问辩谱 5xx/超时/未接线）。 */
+/** 「该能力接线中」降级盒（问辩谱 5xx/超时/未接线）。保持宿主自有实现。 */
 export function DegradeBox({ extra }: { extra?: ReactNode }) {
   const { t } = useTranslation();
   return (
@@ -24,13 +43,12 @@ export function DegradeBox({ extra }: { extra?: ReactNode }) {
 export function ErrorBox({ message, code }: { message: string; code?: number }) {
   const { t } = useTranslation();
   return (
-    <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-      <p>
-        {t("workbench.error")}
-        {message ? `：${message}` : ""}
-      </p>
-      {code === 401 ? <p className="mt-1 text-xs">{t("workbench.tokenHint")}</p> : null}
-    </div>
+    <ErrorState
+      label={t("workbench.error")}
+      detail={message || undefined}
+      hint={code === 401 ? t("workbench.tokenHint") : undefined}
+      toneClassName="border-red-200 bg-red-50 text-red-800"
+    />
   );
 }
 
@@ -49,23 +67,6 @@ export function LoadBox<T>({
   return <>{children(state.data)}</>;
 }
 
-const STABILITY_STYLE: Record<Stability, string> = {
-  stable: "border-green-300 bg-green-50 text-green-800",
-  wavering: "border-amber-300 bg-amber-50 text-amber-800",
-  shelved: "border-neutral-300 bg-neutral-100 text-neutral-500",
-};
-
-export function StabilityBadge({ s }: { s: Stability }) {
-  const { t } = useTranslation();
-  return (
-    <span
-      className={`shrink-0 rounded-full border px-2 py-0.5 text-xs ${STABILITY_STYLE[s] ?? STABILITY_STYLE.shelved}`}
-    >
-      {t(`workbench.stability.${s}`)}
-    </span>
-  );
-}
-
 export function SectionTitle({ children }: { children: ReactNode }) {
   return <h2 className="font-serif text-lg text-neutral-900">{children}</h2>;
 }
@@ -74,6 +75,29 @@ export function Note({ children }: { children: ReactNode }) {
   return <p className="text-sm text-green-700">{children}</p>;
 }
 
+/** 空态（原语：EmptyState）。 */
 export function EmptyLine({ children }: { children: ReactNode }) {
-  return <p className="text-sm text-neutral-400">{children}</p>;
+  return <EmptyState className="text-sm text-neutral-400">{children}</EmptyState>;
+}
+
+const STABILITY_TONE: Record<Stability, { tone: StatusTone; cls: string }> = {
+  stable: { tone: "positive", cls: "border-green-300 bg-green-50 text-green-800" },
+  wavering: { tone: "warn", cls: "border-amber-300 bg-amber-50 text-amber-800" },
+  shelved: { tone: "neutral", cls: "border-neutral-300 bg-neutral-100 text-neutral-500" },
+};
+
+/** 稳定性徽标（stable / wavering / shelved）。 */
+export function StabilityBadge({ s }: { s: Stability }) {
+  const { t } = useTranslation();
+  // 未知状态沿用旧兜底：按 shelved 的配色
+  const spec = STABILITY_TONE[s] ?? STABILITY_TONE.shelved;
+  return (
+    <StatusPill
+      tone={spec.tone}
+      className="shrink-0 rounded-full border px-2 py-0.5 text-xs"
+      toneClassName={{ [spec.tone]: spec.cls }}
+    >
+      {t(`workbench.stability.${s}`)}
+    </StatusPill>
+  );
 }

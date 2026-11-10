@@ -1,0 +1,77 @@
+/* 原语层主题令牌（change lex-web-shell-convergence 5.4，2026-11-10 降级实现）
+ *
+ * ## 这是什么
+ * `primitives/*.tsx` 在宿主**没有**注入 `toneClassName` 时，用 `var(--fd-status-*, <兜底>)`
+ * 的 CSS 变量取色。本文件就是那组变量的正式定义：亮/暗两套值。
+ *
+ * ## 为什么是 opt-in（宿主不 import 就没有任何影响）
+ * 三个宿主目前**都没有暗色主题**（实测：零 `dark:` 类、无 `prefers-color-scheme`、
+ * 无 tailwind 配置，各自只有一套亮色 `@theme` 调色板）。若把本文件默认注入宿主，
+ * 会改变那些尚未传 `toneClassName` 的调用点的观感——那属于未经人眼的视觉变更。
+ * 因此：**宿主显式 `import '../kit/primitives/tokens.css'` 才生效**。
+ *
+ * ## 为什么只用 [data-theme]，不用 @media (prefers-color-scheme)
+ * 主题切换是**产品决定**，不是 OS 的副作用。用媒体查询会让"用户系统是深色"
+ * 悄悄改掉站点配色，且无法被页面覆盖。这里只认显式的 `data-theme="dark"`：
+ * 宿主想跟随系统时，自己在启动时读 `matchMedia` 并写这个属性——选择权在宿主。
+ *
+ * ## 变量全量清单（与 primitives 内的引用一一对应）
+ *   --fd-status-{neutral,positive,warn,danger,info}-{fg,border,bg}   共 15
+ *   --fd-error-{fg,border,bg}                                        共 3
+ * 哨兵 `src/kit/primitives.theme.test.ts` 断言：上面每个变量在亮/暗两套里都存在，
+ * 且暗色值与亮色值**不相等**（防止"抄一份亮色当暗色"这种假双态）。
+ */
+
+:root,
+[data-theme='light'] {
+  --fd-status-neutral-fg: #525252;
+  --fd-status-neutral-border: #d4d4d4;
+  --fd-status-neutral-bg: transparent;
+
+  --fd-status-positive-fg: #1f6b3b;
+  --fd-status-positive-border: #a7d7b5;
+  --fd-status-positive-bg: #f0fdf4;
+
+  --fd-status-warn-fg: #92400e;
+  --fd-status-warn-border: #fcd34d;
+  --fd-status-warn-bg: #fffbeb;
+
+  --fd-status-danger-fg: #991b1b;
+  --fd-status-danger-border: #fca5a5;
+  --fd-status-danger-bg: #fef2f2;
+
+  --fd-status-info-fg: #1e40af;
+  --fd-status-info-border: #93c5fd;
+  --fd-status-info-bg: #eff6ff;
+
+  --fd-error-fg: #991b1b;
+  --fd-error-border: #fca5a5;
+  --fd-error-bg: #fef2f2;
+}
+
+/* 暗色：不是把亮色反相，而是按深色底的对比度重取值（fg 提亮、bg 压深、border 介于两者） */
+[data-theme='dark'] {
+  --fd-status-neutral-fg: #d4d4d4;
+  --fd-status-neutral-border: #525252;
+  --fd-status-neutral-bg: transparent;
+
+  --fd-status-positive-fg: #86efac;
+  --fd-status-positive-border: #166534;
+  --fd-status-positive-bg: #052e16;
+
+  --fd-status-warn-fg: #fcd34d;
+  --fd-status-warn-border: #92400e;
+  --fd-status-warn-bg: #2c1a05;
+
+  --fd-status-danger-fg: #fca5a5;
+  --fd-status-danger-border: #991b1b;
+  --fd-status-danger-bg: #2c0b0b;
+
+  --fd-status-info-fg: #93c5fd;
+  --fd-status-info-border: #1e40af;
+  --fd-status-info-bg: #0b1e3a;
+
+  --fd-error-fg: #fca5a5;
+  --fd-error-border: #991b1b;
+  --fd-error-bg: #2c0b0b;
+}
