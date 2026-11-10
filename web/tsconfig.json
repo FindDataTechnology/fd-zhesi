@@ -9,5 +9,9 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // 测试文件不参与生产构建（与 fd-lex 的 tsconfig.app.json 同惯例）：
+  // 它们会 import node:fs 读源码做哨兵，而生产 tsconfig 不带 node 类型。
+  // vitest 自己转译测试，不需要 tsc 参与。
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }
