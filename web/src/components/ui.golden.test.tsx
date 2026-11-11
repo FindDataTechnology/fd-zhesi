@@ -50,7 +50,11 @@ describe('7.3 golden：改前后 class 集合逐控件相等（fd-zhesi）', () 
     ])
   })
 
-  it('StabilityBadge × 三态', () => {
+  // 5.4b 起 StabilityBadge 走 CSS 变量配色，类名里**不再有颜色类**。
+  // 因此"视觉等价"的主证据从"类名集合相等"改为**像素级 0 差异**
+  // （见 fd-lex/scripts/compare_screenshots.js 的实测：三站 5 页 0/6053760 等）。
+  // 这里仍守住"形状与间距类名一个不丢"，那是像素不变的机器前置条件。
+  it('StabilityBadge × 三态：形状/间距类名不变（配色已改走令牌）', () => {
     const base = [
       'inline-flex',
       'items-center',
@@ -61,30 +65,32 @@ describe('7.3 golden：改前后 class 集合逐控件相等（fd-zhesi）', () 
       'py-0.5',
       'text-xs',
     ]
-    expectSameClasses(renderToStaticMarkup(<StabilityBadge s="stable" />), [
-      ...base,
-      'border-green-300',
-      'bg-green-50',
-      'text-green-800',
-    ])
-    expectSameClasses(renderToStaticMarkup(<StabilityBadge s="wavering" />), [
-      ...base,
-      'border-amber-300',
-      'bg-amber-50',
-      'text-amber-800',
-    ])
-    expectSameClasses(renderToStaticMarkup(<StabilityBadge s="shelved" />), [
-      ...base,
-      'border-neutral-300',
-      'bg-neutral-100',
-      'text-neutral-500',
-    ])
+    for (const [state, tone] of [
+      ['stable', 'positive'],
+      ['wavering', 'warn'],
+      ['shelved', 'neutral'],
+    ]) {
+      const html = renderToStaticMarkup(<StabilityBadge s={state as never} />)
+      expectSameClasses(html, base)
+      // 配色必须来自令牌，且 tone 与状态对应
+      expect(html).toContain(`data-tone="${tone}"`)
+      expect(html).toContain(`var(--fd-status-${tone}-`)
+    }
   })
 
-  it('未知稳定性沿用 shelved 兜底', () => {
+  it('未知稳定性沿用 neutral 令牌兜底', () => {
     // @ts-expect-error 故意传非法值，验证运行时兜底
-    const got = classesOf(renderToStaticMarkup(<StabilityBadge s="weird" />))
-    expect(got.has('bg-neutral-100')).toBe(true)
-    expect(got.has('text-neutral-500')).toBe(true)
+    const html = renderToStaticMarkup(<StabilityBadge s="weird" />)
+    expectSameClasses(html, [
+      'inline-flex',
+      'items-center',
+      'rounded-full',
+      'border',
+      'shrink-0',
+      'px-2',
+      'py-0.5',
+      'text-xs',
+    ])
+    expect(html).toContain('data-tone="neutral"')
   })
 })

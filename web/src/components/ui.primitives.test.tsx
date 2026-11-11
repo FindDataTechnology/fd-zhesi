@@ -58,16 +58,29 @@ describe('视觉类名仍是宿主原值', () => {
     expect(html).not.toContain('--fd-error-bg')
   })
 
-  it('稳定性徽标三态配色与尺寸保持原值', () => {
+  it('稳定性徽标的配色走令牌变量（5.4b 起），尺寸类名保持原值', () => {
+    // 5.4b 之前这里断言的是 `bg-green-50` 这类 Tailwind 类名；改为变量路径后**类名本来就不该出现**——
+    // 配色交给 --fd-status-* ，由主题切换生效。所以哨兵断言的"契约"变了：
+    // ① 尺寸/间距类名仍在（视觉不漂移）；② 配色出现在 var() 里（而不是写死类名）。
     const stable = renderToStaticMarkup(<StabilityBadge s="stable" />)
-    expect(stable).toContain('bg-green-50')
     expect(stable).toContain('px-2')
     expect(stable).toContain('py-0.5')
+    expect(stable).toContain('text-xs')
+    expect(stable).toContain('var(--fd-status-positive-')
+    expect(stable).not.toMatch(/bg-green-50|text-green-800/)
+
     const wavering = renderToStaticMarkup(<StabilityBadge s="wavering" />)
-    expect(wavering).toContain('bg-amber-50')
+    expect(wavering).toContain('var(--fd-status-warn-')
+
     const shelved = renderToStaticMarkup(<StabilityBadge s="shelved" />)
-    expect(shelved).toContain('bg-neutral-100')
-    expect(shelved).toContain('text-neutral-500')
+    expect(shelved).toContain('var(--fd-status-neutral-')
+  })
+
+  it('未知稳定性退回 neutral 令牌（不 panic、不空白）', () => {
+    // @ts-expect-error 故意传非法值
+    const html = renderToStaticMarkup(<StabilityBadge s="weird" />)
+    expect(html).toContain('data-tone="neutral"')
+    expect(html).toContain('var(--fd-status-neutral-')
   })
 })
 

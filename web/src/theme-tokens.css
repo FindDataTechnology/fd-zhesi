@@ -1,0 +1,57 @@
+/* fd-zhesi 的品牌令牌覆盖（change lex-web-shell-convergence 5.4b）
+ *
+ * 来源：本宿主 与 fd-shilun 同源调色板（两宿主 ui.tsx 同源）。原语层（src/kit/primitives）在宿主**不传**
+ * `toneClassName` 时用 var(--fd-status-*, 兜底) 取色；本文件把那组变量的取值
+ * 改成**本宿主的品牌色**，因此同一份原语实现能落进三套不同调色板。
+ *
+ * 亮色值 = 宿主既有 Tailwind 类名对应的色值（因此切到变量路径不改变观感）；
+ * 暗色按深底重新推导：fg 提亮、bg 压深、border 居中，不是把亮色反相。
+ *
+ * 主题切换：调用 kit 的 `applyTheme(document.documentElement, "dark")`，
+ * 即写入 data-theme="dark"。不使用 @media (prefers-color-scheme)——
+ * 跟随系统是产品决定，由宿主自己决定要不要读 matchMedia。
+ */
+@import "./kit/primitives/tokens.css";
+
+:root,
+[data-theme='light'] {
+  --fd-status-neutral-fg: #56565c;
+  --fd-status-neutral-border: #c9c9c2;
+  --fd-status-neutral-bg: transparent;
+  --fd-status-positive-fg: #1f6b3b;
+  --fd-status-positive-border: #a7d7b5;
+  --fd-status-positive-bg: #f0fdf4;
+  --fd-status-warn-fg: #92400e;
+  --fd-status-warn-border: #fcd34d;
+  --fd-status-warn-bg: #fffbeb;
+  --fd-status-danger-fg: #991b1b;
+  --fd-status-danger-border: #fca5a5;
+  --fd-status-danger-bg: #fef2f2;
+  --fd-status-info-fg: #1f5f5b;
+  --fd-status-info-border: #a8cbc8;
+  --fd-status-info-bg: #e2efee;
+  --fd-error-fg: #991b1b;
+  --fd-error-border: #fca5a5;
+  --fd-error-bg: #fef2f2;
+}
+
+[data-theme='dark'] {
+  --fd-status-neutral-fg: #c9c9c2;
+  --fd-status-neutral-border: #56565c;
+  --fd-status-neutral-bg: transparent;
+  --fd-status-positive-fg: #86efac;
+  --fd-status-positive-border: #166534;
+  --fd-status-positive-bg: #052e16;
+  --fd-status-warn-fg: #fcd34d;
+  --fd-status-warn-border: #92400e;
+  --fd-status-warn-bg: #2c1a05;
+  --fd-status-danger-fg: #fca5a5;
+  --fd-status-danger-border: #991b1b;
+  --fd-status-danger-bg: #2c0b0b;
+  --fd-status-info-fg: #a8cbc8;
+  --fd-status-info-border: #1f5f5b;
+  --fd-status-info-bg: #0d2b29;
+  --fd-error-fg: #fca5a5;
+  --fd-error-border: #991b1b;
+  --fd-error-bg: #2c0b0b;
+}

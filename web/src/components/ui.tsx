@@ -91,11 +91,14 @@ export function StabilityBadge({ s }: { s: Stability }) {
   const { t } = useTranslation();
   // 未知状态沿用旧兜底：按 shelved 的配色
   const spec = STABILITY_TONE[s] ?? STABILITY_TONE.shelved;
+  // 5.4b：只传 tone 不传 toneClassName → 配色走 CSS 变量（--fd-status-*）。
+  // 亮色值在 theme-tokens.css 里精确等于原 Tailwind 类名的色值，故观感不变；
+  // 代价是暗色主题下这枚徽标会随 [data-theme=dark] 变色，这正是要的效果。
+  // spec.cls 保留为注释性对照，不再参与渲染。
   return (
     <StatusPill
       tone={spec.tone}
       className="shrink-0 rounded-full border px-2 py-0.5 text-xs"
-      toneClassName={{ [spec.tone]: spec.cls }}
     >
       {t(`workbench.stability.${s}`)}
     </StatusPill>
