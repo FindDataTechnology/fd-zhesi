@@ -371,8 +371,17 @@ export function createAuth(options: AuthOptions): Auth {
       const url = new URL(window.location.href)
       const error = url.searchParams.get('error')
       const code = url.searchParams.get('code')
-      // `login_required` 是「无活跃会话」的标准应答，不是故障：清掉参数后如实降级。
-      if (error === 'login_required' || error === 'interaction_required') {
+      // 这三个都是 OIDC 的「需要用户交互」应答，不是故障：清掉参数后如实降级。
+      //   login_required      — 无活跃会话
+      //   interaction_required — 需要用户在场
+      //   consent_required     — 该客户端尚未获得授权（真机 2026-11-18：跨 app 静默时
+      //                          Logto 按客户端分别授权，实论首次访问就返回这个）
+      // 把它们当故障会让「去登录」变成「会话检查失败，请重试」——用户点重试永远失败。
+      if (
+        error === 'login_required' ||
+        error === 'interaction_required' ||
+        error === 'consent_required'
+      ) {
         url.searchParams.delete('error')
         url.searchParams.delete('error_description')
         url.searchParams.delete('state')
