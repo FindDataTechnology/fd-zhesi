@@ -32,7 +32,7 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          repository: scs001/fd-zhesi-reference-images
+          repository: FindDataTechnology/fd-zhesi-reference
           path: fd-zhesi-reference
 
       - name: Install
