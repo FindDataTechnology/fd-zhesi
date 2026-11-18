@@ -32,3 +32,8 @@ export type {
   EmptyStateProps,
   ClassValue,
 } from './primitives/index'
+
+// 站点接待副驾（openspec: line-reception-copilot）：一行 loader 接入，
+// 宿主声明上下文与导航白名单，协议全在 copilot.js 里。
+export { SiteCopilot } from './site-copilot/SiteCopilot'
+export type { SiteCopilotProps } from './site-copilot/SiteCopilot'
