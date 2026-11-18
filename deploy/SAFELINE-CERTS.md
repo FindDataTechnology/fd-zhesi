@@ -8,7 +8,7 @@
 | 项 | 值 |
 |---|---|
 | 建议域名 | `zhesi.finddatatech.cloud`（与 lex./wire./platform. 同族；若已有 `*.finddatatech.cloud` 泛域名证书可直接用） |
-| 回源地址 | `http://100.64.0.8:31901`（fd-zhesi-web，NodePort，任一 cheap 节点均可回源：100.64.0.8 / .9 / .13 / .14 / .15） |
+| 回源地址 | `http://10.0.0.10:31901`（fd-zhesi-web，NodePort，任一 cheap 节点均可回源：10.0.0.10 / .9 / .13 / .14 / .15） |
 | 回源协议 | HTTP（集群内无 TLS），对外 HTTPS + HTTP→HTTPS 跳转 |
 | 说明 | **只需要这一个站点**。API（fd-zhesi-api）不需要单独暴露——web 的 nginx 已把 `/api/` 反代到集群内 api 服务；参照系 MCP（31900）走内网，不直接上公网（见 §4） |
 
@@ -37,7 +37,7 @@ mcp 网关注册通道**（`mcp.finddatatech.cloud/fd-zhesi-reference`，同 fd-
 
 - `proxy_buffering off`（SSE 流式响应不能缓冲）
 - 读超时 ≥ 120s；HTTP/1.1；放行 `mcp-session-id` 响应头
-- 回源 `http://100.64.0.8:31900`
+- 回源 `http://10.0.0.10:31900`
 
 ## 5. 证书
 

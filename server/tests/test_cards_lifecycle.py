@@ -152,7 +152,7 @@ def test_jwks_jwt_path(tmp_path, monkeypatch) -> None:
 
 
 def test_jwks_es384_path(tmp_path, monkeypatch) -> None:
-    """Logto 1.42 实签算法 ES384 必须放行（线上 aloadtree ID token 实测踩坑）。"""
+    """Logto 1.42 实签算法 ES384 必须放行（线上 demo-user ID token 实测踩坑）。"""
     import http.server
     import json
     import socketserver
