@@ -1,5 +1,5 @@
 export default {
-  nav: { login: "登录", logout: "退出", home: "首页", workbench: "工作台", admin: "管理后台", token: "访问令牌" },
+  nav: { login: "登录", logout: "退出", home: "首页", workbench: "工作台", admin: "管理后台", sessionCheckFailed: "会话检查失败，请重试", retry: "重试" },
   landing: {
     hero: {
       statement1: "把哲学史，",
@@ -47,7 +47,7 @@ export default {
     unavailable: "该能力接线中，稍后再试",
     error: "出错了",
     retry: "重试",
-    tokenHint: "请先在右上角输入访问令牌（开发态）",
+    tokenHint: "请先登录后再使用此功能",
     stability: { stable: "坚定", wavering: "动摇", shelved: "搁置" },
     card: { question: "问题", position: "立场", reasons: "理由" },
     ask: {

@@ -4,6 +4,9 @@
 // 本文件同时是"无 router 依赖"的守门点：它 MUST NOT 出现任何路由库导入。
 
 export { createAuth, AuthError } from './auth/index'
+export { ssoHintSeen, ssoHintMark, ssoHintClear } from './auth/sso-hint'
+export { runSsoOnMount } from './auth/sso-mount'
+export type { SsoMountOptions } from './auth/sso-mount'
 export type { Auth, AuthConfig, AuthOptions, AuthSession } from './auth/index'
 
 export { createI18n, assertLocaleParity, localeDiff } from './i18n/index'

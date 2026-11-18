@@ -73,6 +73,15 @@ export interface Auth {
   config(): Promise<AuthConfig>
   /** 未配置时抛 AuthError('config')，不发起任何跳转 */
   beginLogin(): Promise<void>
+  /** 同租户静默单点登录（web-shell-kit「同租户静默单点登录」）：
+   *  - 返回 'logged-in'：身份提供方有活跃会话，已完成交换并把会话落存储；
+   *  - 返回 'interactive-required'：无会话（`error=login_required`），**无副作用**，调用方应展示登录入口；
+   *  - 抛 AuthError：真实故障（网络/配置/凭据被拒），调用方按既有分流处理，不得当作「未登录」。
+   *  不跳转——它只在回跳页面上工作；发起静默尝试用 `beginSilentLogin()`。 */
+  trySilentLogin(): Promise<'logged-in' | 'interactive-required'>
+  /** 发起一次静默授权跳转（`prompt=none`）。回跳落到 redirectUri，由
+   *  completeLogin/trySilentLogin 收口。 */
+  beginSilentLogin(): Promise<void>
   /** 用授权码换令牌（低层原语：state/nonce 校验与跳转清理由调用方决定）。
    *  供需要自有契约的宿主复用——它只做 exchange，不改 window、不落存储。 */
   exchangeCode(code: string, verifier: string): Promise<AuthSession>
@@ -146,6 +155,8 @@ export function createAuth(options: AuthOptions): Auth {
     state: string
     nonce?: string
     returnTo?: string
+    /** 这次授权是否是 `prompt=none` 静默尝试（回跳收口时据此区分口径，不改变校验） */
+    silent?: boolean
   }
 
   const loadPkce = (): PkceState | null => {
@@ -279,70 +290,109 @@ export function createAuth(options: AuthOptions): Auth {
     return sessionFromTokens(tokens)
   }
 
-  return {
-    config: resolveConfig,
-
-    async beginLogin(): Promise<void> {
-      const config = await resolveConfig()
-      if (!config.configured) {
-        // 如实阻塞：不跳转、不假登录
-        throw new AuthError(
-          'config',
-          'auth.not_configured',
-          undefined,
-          config.missing.join(', '),
-        )
-      }
-      const verifier = randomString(48)
-      const state = randomString(16)
-      const nonce = useNonce ? randomString(16) : undefined
-      savePkce({ verifier, state, nonce, returnTo: defaultReturnTo })
-      const params = new URLSearchParams({
-        client_id: config.client_id,
-        redirect_uri: redirectUri,
-        response_type: 'code',
-        scope: config.scopes.join(' '),
-        state,
-        code_challenge: await sha256B64Url(verifier),
-        code_challenge_method: 'S256',
-      })
-      if (nonce) params.set('nonce', nonce)
-      if (config.resource) params.set('resource', config.resource)
-      assign(`${config.issuer}/oidc/auth?${params.toString()}`)
-    },
-
-    async completeLogin(): Promise<{ ok: boolean; returnTo?: string }> {
-      if (typeof window === 'undefined') return { ok: false }
-      const url = new URL(window.location.href)
-      const code = url.searchParams.get('code')
-      const state = url.searchParams.get('state')
-      if (!code) return { ok: false }
-      const pkce = loadPkce()
-      if (!state || !pkce || state !== pkce.state) {
-        url.searchParams.delete('code')
-        url.searchParams.delete('state')
-        window.history.replaceState({}, '', url.pathname)
-        return { ok: false }
-      }
-      const verifier = pkce.verifier
-      // nonce 校验：发起时带了就要求回执里有且相等（防重放）
-      const session = await exchangeCode(code, verifier)
-      if (pkce.nonce) {
-        const claims = claimsOf(session.idToken)
-        if (claims.nonce !== undefined && claims.nonce !== pkce.nonce) {
-          url.searchParams.delete('code')
-          url.searchParams.delete('state')
-          window.history.replaceState({}, '', url.pathname)
-          store()?.removeItem(PKCE_KEY)
-          return { ok: false }
-        }
-      }
+  async function completeLoginImpl(): Promise<{ ok: boolean; returnTo?: string }> {
+    if (typeof window === 'undefined') return { ok: false }
+    const url = new URL(window.location.href)
+    const code = url.searchParams.get('code')
+    const state = url.searchParams.get('state')
+    if (!code) return { ok: false }
+    const pkce = loadPkce()
+    if (!state || !pkce || state !== pkce.state) {
       url.searchParams.delete('code')
       url.searchParams.delete('state')
       window.history.replaceState({}, '', url.pathname)
-      store()?.removeItem(PKCE_KEY)
-      saveSession(session)
-      return { ok: true, returnTo: pkce.returnTo }
+      return { ok: false }
+    }
+    const verifier = pkce.verifier
+    // nonce 校验：发起时带了就要求回执里有且相等（防重放）
+    const session = await exchangeCode(code, verifier)
+    if (pkce.nonce) {
+      const claims = claimsOf(session.idToken)
+      if (claims.nonce !== undefined && claims.nonce !== pkce.nonce) {
+        url.searchParams.delete('code')
+        url.searchParams.delete('state')
+        window.history.replaceState({}, '', url.pathname)
+        store()?.removeItem(PKCE_KEY)
+        return { ok: false }
+      }
+    }
+    url.searchParams.delete('code')
+    url.searchParams.delete('state')
+    window.history.replaceState({}, '', url.pathname)
+    store()?.removeItem(PKCE_KEY)
+    saveSession(session)
+    return { ok: true, returnTo: pkce.returnTo }
+  }
+
+  async function authorize(prompt: 'none' | null, returnTo: string | undefined): Promise<void> {
+    const config = await resolveConfig()
+    if (!config.configured) {
+      // 如实阻塞：不跳转、不假登录
+      throw new AuthError(
+        'config',
+        'auth.not_configured',
+        undefined,
+        config.missing.join(', '),
+      )
+    }
+    const verifier = randomString(48)
+    const state = randomString(16)
+    const nonce = useNonce ? randomString(16) : undefined
+    // 静默尝试与交互式用**同一个** PKCE 存储键：回跳只可能属于最后一次发起的那次授权。
+    savePkce({ verifier, state, nonce, returnTo, silent: prompt === 'none' })
+    const params = new URLSearchParams({
+      client_id: config.client_id,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: config.scopes.join(' '),
+      state,
+      code_challenge: await sha256B64Url(verifier),
+      code_challenge_method: 'S256',
+    })
+    if (prompt === 'none') params.set('prompt', 'none')
+    if (nonce) params.set('nonce', nonce)
+    if (config.resource) params.set('resource', config.resource)
+    assign(`${config.issuer}/oidc/auth?${params.toString()}`)
+  }
+
+  return {
+    config: resolveConfig,
+
+    beginLogin(): Promise<void> {
+      return authorize(null, defaultReturnTo)
+    },
+
+    beginSilentLogin(): Promise<void> {
+      return authorize('none', defaultReturnTo)
+    },
+
+    async trySilentLogin(): Promise<'logged-in' | 'interactive-required'> {
+      if (typeof window === 'undefined') return 'interactive-required'
+      const url = new URL(window.location.href)
+      const error = url.searchParams.get('error')
+      const code = url.searchParams.get('code')
+      // `login_required` 是「无活跃会话」的标准应答，不是故障：清掉参数后如实降级。
+      if (error === 'login_required' || error === 'interaction_required') {
+        url.searchParams.delete('error')
+        url.searchParams.delete('error_description')
+        url.searchParams.delete('state')
+        url.searchParams.delete('iss')
+        window.history.replaceState({}, '', url.pathname)
+        store()?.removeItem(PKCE_KEY)
+        return 'interactive-required'
+      }
+      // 其他 error= 是真实故障（invalid_request/unauthorized_client/…）：不吞
+      if (error) {
+        throw new AuthError('invalid', `auth.silent_rejected: ${error}`, undefined, error)
+      }
+      if (!code) return 'interactive-required'
+      // 有 code：与交互式回跳完全同一条交换路径（state/nonce 校验在 completeLogin 里）
+      const result = await completeLoginImpl()
+      return result.ok ? 'logged-in' : 'interactive-required'
+    },
+
+    async completeLogin(): Promise<{ ok: boolean; returnTo?: string }> {
+      return completeLoginImpl()
     },
 
     exchangeCode,

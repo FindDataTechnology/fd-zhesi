@@ -12,6 +12,7 @@
 // 2. 登出仍跳 Logto 的 `/session/end`（壳的 logoutLocal 只清本地会话）。
 import { createAuth } from '../kit/auth/index'
 import { setToken } from './client'
+import { ssoHintMark as mark, ssoHintSeen as seen } from '../kit/auth/sso-hint'
 
 const ISSUER_BASE = 'https://auth.finddatatech.cloud'
 const CLIENT_ID = '8l4ogqpoino6uwvlri5wa' // Logto: zhesi-workbench（SPA）
@@ -85,4 +86,36 @@ export function logout(): void {
     post_logout_redirect_uri: `${window.location.origin}/`,
   })
   window.location.assign(`${ISSUER_BASE}/oidc/session/end?${params}`)
+}
+
+/**
+ * 同租户静默单点登录（web-shell-kit「同租户静默单点登录」）。
+ * 形状由真实 IdP 决定：无会话时 prompt=none 返回 error=login_required（303 到回跳），
+ * auth 域 X-Frame-Options: SAMEORIGIN ⇒ 静默是一次整页跳转，不可 iframe。
+ */
+export async function trySilentLogin(): Promise<'logged-in' | 'interactive-required'> {
+  try {
+    const outcome = await auth().trySilentLogin()
+    if (outcome === 'logged-in') {
+      const token = auth().loadSession()?.idToken
+      if (token) setToken(token)
+    }
+    return outcome
+  } catch {
+    return 'interactive-required'
+  }
+}
+
+/** 发起一次静默授权跳转（prompt=none）。只在「本租户登录过」时调用。 */
+export async function beginSilentLogin(): Promise<void> {
+  await auth().beginSilentLogin()
+}
+
+export const SSO_HINT_DOMAIN = '.finddatatech.cloud'
+export const ssoHintSeen = (): boolean => seen(SSO_HINT_DOMAIN)
+export const ssoHintMark = (): void => mark(SSO_HINT_DOMAIN)
+
+/** 共享壳实例（供 App 的静默 SSO 挂载点使用；惰性求值，不提前读 window）。 */
+export function authShell() {
+  return auth()
 }
