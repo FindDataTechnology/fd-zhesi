@@ -14,7 +14,7 @@ COPY pyproject.toml README.md ./
 COPY fd_zhesi_api ./fd_zhesi_api
 
 RUN if [ -n "$PIP_INDEX_URL" ]; then pip install --no-cache-dir -i "$PIP_INDEX_URL" .; else pip install --no-cache-dir .; fi \
- && pip install --no-cache-dir https://github.com/scs001/fd-zhesi-reference-images/archive/refs/heads/main.tar.gz \
+ && pip install --no-cache-dir https://github.com/FindDataTechnology/fd-zhesi-reference/archive/refs/heads/main.tar.gz \
  && useradd -m -u 1000 appuser
 
 USER appuser
