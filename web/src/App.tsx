@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { getToken, setToken } from "./api/client";
 import { authShell, login, logout, SSO_HINT_DOMAIN } from "./api/logto";
 import { runSsoOnMount } from "./kit/auth/sso-mount";
-import { SiteCopilot } from "./kit";
+import { SiteCopilot, SiteFooter } from "./kit";
 import Landing from "./pages/Landing";
 import Workbench from "./pages/Workbench";
 import Admin from "./pages/Admin";
@@ -108,6 +108,7 @@ export default function App() {
         <Route path="/workbench" element={<Workbench />} />
         <Route path="/admin" element={<Admin />} />
       </Routes>
+      <SiteFooter brand="哲思 Zhesi" tagline="寻数·识律家族 —— 世界观研讨工作台" links={[{ href: "https://www.finddatatech.cloud/", label: "寻数官网" }]} />
           <SiteCopilot line="zhesi" lineName="哲思" navTargets={['/workbench', '/docs'] as const} />
 </div>
   );

@@ -37,3 +37,7 @@ export type {
 // 宿主声明上下文与导航白名单，协议全在 copilot.js 里。
 export { SiteCopilot } from './site-copilot/SiteCopilot'
 export type { SiteCopilotProps } from './site-copilot/SiteCopilot'
+
+// 站点页脚（门面家具）：品牌名/定位经 props 注入，双备案号写死。
+export { SiteFooter } from './shell/SiteFooter'
+export type { SiteFooterProps } from './shell/SiteFooter'
